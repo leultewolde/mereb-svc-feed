@@ -39,7 +39,7 @@ deploy:
     when: branch=main & !pr
     autoPromote: true
     smoke:
-      url: https://feed.dev.mereb.social/healthz
+      url: https://api-dev.mereb.app/feed/healthz
 
   stg:
     release: svc-feed-stg
@@ -56,7 +56,7 @@ deploy:
       message: "Promote svc-feed deployment to staging?"
       submitter: release-managers
     smoke:
-      url: https://feed.stg.mereb.social/healthz
+      url: https://api-dev.mereb.app/feed/healthz
 
   prd:
     release: svc-feed
@@ -72,7 +72,7 @@ deploy:
       message: "Deploy svc-feed to production?"
       submitter: release-managers
     smoke:
-      url: https://feed.mereb.social/healthz
+      url: https://api.mereb.app/feed/healthz
 
 signing:
   enabled: false
