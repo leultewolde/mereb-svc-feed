@@ -6,6 +6,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
+    "prebuild": "pnpm prisma:generate",
     "dev": "tsx src/index.ts",
     "build": "tsc -b",
     "start": "node dist/index.js",
