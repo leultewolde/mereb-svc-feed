@@ -20,7 +20,7 @@ image:
     enabled: true
     when: '!pr'
     credentialsId: docker-registry-local
-    registry: http://10.0.0.222:8080
+    registry: http://10.0.0.222:30400
 
 deploy:
   order:
