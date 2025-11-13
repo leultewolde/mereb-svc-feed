@@ -1,0 +1,100 @@
+version: 1
+preset: node
+
+build:
+  pnpm:
+    nodeVersion: 20.19.2
+    packageName: "@services/svc-feed"
+    steps:
+      - type: lint
+        name: Lint service sources
+      - type: build
+        name: Build service package
+
+image:
+  repository: registry.leultewolde.com/mereb/svc-feed
+  context: .
+  dockerfile: Dockerfile
+  tagStrategy: branch-sha
+  push:
+    enabled: true
+    when: '!pr'
+    credentialsId: docker-registry-local
+    registry: registry.leultewolde.com
+
+deploy:
+  order:
+    - dev
+    - stg
+    - prd
+
+  dev:
+    release: svc-feed-dev
+    namespace: apps-dev
+    chart: app-chart
+    repo: https://charts.leultewolde.com
+    repoCredentialId: helm-chart-creds
+    valuesFiles:
+      - .ci/values-dev.yaml
+    when: branch=main & !pr
+    autoPromote: true
+    smoke:
+      url: https://feed.dev.mereb.social/healthz
+
+  stg:
+    release: svc-feed-stg
+    namespace: apps-stg
+    chart: app-chart
+    repo: https://charts.leultewolde.com
+    repoCredentialId: helm-chart-creds
+    valuesFiles:
+      - .ci/values-stg.yaml
+    when: branch=main & !pr
+    autoPromote: true
+    approval:
+      before: true
+      message: "Promote svc-feed deployment to staging?"
+      submitter: release-managers
+    smoke:
+      url: https://feed.stg.mereb.social/healthz
+
+  prd:
+    release: svc-feed
+    namespace: apps-prd
+    chart: app-chart
+    repo: https://charts.leultewolde.com
+    repoCredentialId: helm-chart-creds
+    valuesFiles:
+      - .ci/values-prd.yaml
+    when: tag=^v[0-9].*
+    autoPromote: false
+    approval:
+      message: "Deploy svc-feed to production?"
+      submitter: release-managers
+    smoke:
+      url: https://feed.mereb.social/healthz
+
+signing:
+  enabled: false
+
+release:
+  autoTag:
+    enabled: true
+    when: branch=main & !pr
+    prefix: v
+    bump: patch
+    remote: origin
+    gitUser: Mereb CI
+    gitEmail: ci@mereb.dev
+    credentialId: github-credentials
+    clean: false
+    allowDirty: true
+    skipIfTagged: true
+    afterEnvironment: stg
+  github:
+    enabled: true
+    when: tag=^v[0-9].*
+    repo: leultewolde/mereb-svc-feed
+    stageName: GitHub Release
+    credentialId: github-credentials
+    generateReleaseNotes: true

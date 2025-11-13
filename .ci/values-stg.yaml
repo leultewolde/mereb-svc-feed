@@ -1,0 +1,63 @@
+nameOverride: svc-feed
+
+replicaCount: 2
+
+imagePullSecrets:
+  - regcred
+
+image:
+  repository: registry.leultewolde.com/mereb/svc-feed
+  env:
+    - name: NODE_ENV
+      value: production
+    - name: SERVICE_NAME
+      value: svc-feed
+  envFrom:
+    - configMapRef:
+        name: svc-feed-stg-config
+    - secretRef:
+        name: svc-feed-stg-secrets
+        optional: true
+
+service:
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      containerPort: 4002
+
+ingress:
+  enabled: true
+  className: kong
+  annotations:
+    kubernetes.io/ingress.class: kong
+    cert-manager.io/cluster-issuer: letsencrypt-http
+    konghq.com/strip-path: "true"
+  hosts:
+    - host: api-stg.mereb.app
+      paths:
+        - path: /feed
+          pathType: Prefix
+          servicePort: http
+  tls:
+    - secretName: feed-stg-tls
+      hosts:
+        - api-stg.mereb.app
+
+configMap:
+  enabled: true
+  nameOverride: svc-feed-stg-config
+  data:
+    PORT: "4002"
+    OIDC_ISSUER: https://idp.stg.mereb.social/realms/mereb
+    OIDC_AUDIENCE: mereb-stg
+    REDIS_URL: redis://platform-stg-redis-master.platform-stg.svc.cluster.local:6379/2
+    KAFKA_BROKERS: platform-stg-redpanda-0.platform-stg-redpanda.platform-stg.svc.cluster.local:9092,platform-stg-redpanda-1.platform-stg-redpanda.platform-stg.svc.cluster.local:9092,platform-stg-redpanda-2.platform-stg-redpanda.platform-stg.svc.cluster.local:9092
+
+resources:
+  requests:
+    cpu: 125m
+    memory: 192Mi
+  limits:
+    cpu: 350m
+    memory: 512Mi

@@ -1,0 +1,69 @@
+scalar FieldSet
+
+directive @external on FIELD_DEFINITION
+directive @provides(fields: FieldSet) on FIELD_DEFINITION
+directive @key(fields: FieldSet) repeatable on OBJECT | INTERFACE
+directive @extends on OBJECT | INTERFACE
+
+scalar _Any
+
+type User @extends @key(fields: "id") {
+  id: ID! @external
+  posts(after: String, limit: Int = 20): PostConnection!
+  liked(postId: ID!): Boolean!
+}
+
+type Post @key(fields: "id") {
+  id: ID!
+  author: User! @provides(fields: "id")
+  body: String!
+  media: [Media!]!
+  createdAt: String!
+  likeCount: Int!
+  likedByMe: Boolean!
+}
+
+type AdminContentMetrics {
+  totalPosts: Int!
+  postsLast24h: Int!
+  totalLikes: Int!
+}
+
+type Media {
+  type: String!
+  url: String!
+}
+
+type PostEdge {
+  node: Post!
+  cursor: String!
+}
+
+type PostConnection {
+  edges: [PostEdge!]!
+  pageInfo: PageInfo!
+}
+
+type PageInfo {
+  endCursor: String
+  hasNextPage: Boolean!
+}
+
+union _Entity = User | Post
+
+type Query {
+  feedHome(after: String, limit: Int = 20): PostConnection!
+  post(id: ID!): Post
+  adminContentMetrics: AdminContentMetrics!
+  adminRecentPosts(limit: Int = 10): [Post!]!
+}
+
+type Mutation {
+  createPost(body: String!, mediaKeys: [String!]): Post!
+  likePost(id: ID!): Boolean!
+  unlikePost(id: ID!): Boolean!
+}
+
+extend type Query {
+  _entities(representations: [_Any!]!): [_Entity]!
+}

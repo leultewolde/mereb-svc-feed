@@ -1,0 +1,44 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
+}
+
+model Post {
+  id         String   @id @default(cuid())
+  authorId   String   @db.VarChar(36)
+  body       String   @db.Text
+  media      Json?
+  visibility String   @default("public")
+  createdAt  DateTime @default(now())
+
+  likes Like[]
+
+  @@index([createdAt, id])
+}
+
+model Like {
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([userId, postId])
+  @@index([postId, createdAt])
+}
+
+model HomeFeed {
+  ownerId    String
+  postId     String
+  rank       Int      @default(0)
+  insertedAt DateTime @default(now())
+
+  @@id([ownerId, postId])
+  @@index([ownerId, insertedAt, postId])
+}
