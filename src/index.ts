@@ -6,5 +6,11 @@ loadEnv();
 const PORT = getNumberEnv('PORT', 4002);
 const HOST = process.env.HOST ?? '0.0.0.0';
 
-const app = await buildServer();
-await app.listen({ port: PORT, host: HOST });
+try {
+    const app = await buildServer();
+    await app.listen({ port: PORT, host: HOST });
+    console.log(`Server listening on ${HOST}:${PORT}`);
+} catch (err) {
+    console.error('Failed to start server', err);
+    process.exit(1);
+}
