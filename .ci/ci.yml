@@ -20,7 +20,7 @@ image:
     enabled: true
     when: '!pr'
     credentialsId: docker-registry-local
-    registry: registry.leultewolde.com
+    registry: http://docker-registry.registry.svc.cluster.local:5000
 
 deploy:
   order:
