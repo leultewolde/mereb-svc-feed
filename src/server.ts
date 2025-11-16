@@ -9,6 +9,7 @@ import { makeExecutableSchema } from '@graphql-tools/schema';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { RedisClientType } from '@redis/client';
 import {
   createLogger,
   getEnv,
@@ -47,7 +48,12 @@ export async function buildServer(): Promise<FastifyInstance> {
   }
 
   const redisUrl = getEnv('REDIS_URL');
-  const redis = await getRedisClient({ url: redisUrl });
+  let redis: RedisClientType | undefined;
+  try {
+    redis = await getRedisClient({ url: redisUrl });
+  } catch (error) {
+    app.log.warn({ err: error }, 'Failed to connect to Redis, cache disabled');
+  }
 
   const kafkaBrokers = process.env.KAFKA_BROKERS;
   const kafkaConfig: KafkaConfig | null = kafkaBrokers
