@@ -59,7 +59,7 @@ deploy:
       message: "Promote svc-feed deployment to staging?"
       submitter: release-managers
     smoke:
-      url: https://api-dev.mereb.app/feed/healthz
+      url: https://api-stg.mereb.app/feed/healthz
       retries: 3
       delay: 10
       timeout: 60s
