@@ -49,7 +49,7 @@ configMap:
   nameOverride: svc-feed-prd-config
   data:
     PORT: "4002"
-    OIDC_ISSUER: https://idp.mereb.social/realms/mereb
+    OIDC_ISSUER: https://auth.mereb.app/realms/mereb
     OIDC_AUDIENCE: mereb
     REDIS_URL: redis://platform-prd-redis-master.platform-prd.svc.cluster.local:6379/2
     KAFKA_BROKERS: platform-prd-redpanda-0.platform-prd-redpanda.platform-prd.svc.cluster.local:9092,platform-prd-redpanda-1.platform-prd-redpanda.platform-prd.svc.cluster.local:9092,platform-prd-redpanda-2.platform-prd-redpanda.platform-prd.svc.cluster.local:9092

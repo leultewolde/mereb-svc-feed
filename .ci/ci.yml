@@ -40,6 +40,9 @@ deploy:
     autoPromote: true
     smoke:
       url: https://api-dev.mereb.app/feed/healthz
+      retries: 3
+      delay: 10
+      timeout: 60s
 
   stg:
     release: svc-feed-stg
@@ -57,6 +60,9 @@ deploy:
       submitter: release-managers
     smoke:
       url: https://api-dev.mereb.app/feed/healthz
+      retries: 3
+      delay: 10
+      timeout: 60s
 
   prd:
     release: svc-feed
@@ -73,6 +79,9 @@ deploy:
       submitter: release-managers
     smoke:
       url: https://api.mereb.app/feed/healthz
+      retries: 3
+      delay: 10
+      timeout: 60s
 
 signing:
   enabled: false
