@@ -49,7 +49,7 @@ deploy:
       tokenEnv: VAULT_TOKEN
       engine: kv2
     credentials:
-      - type: string
+      - type: vaultToken
         id: vault-credentials
         env: VAULT_TOKEN
     when: branch=main & !pr
@@ -81,7 +81,7 @@ deploy:
       tokenEnv: VAULT_TOKEN
       engine: kv2
     credentials:
-      - type: string
+      - type: vaultToken
         id: vault-credentials
         env: VAULT_TOKEN
     when: branch=main & !pr
@@ -117,7 +117,7 @@ deploy:
       tokenEnv: VAULT_TOKEN
       engine: kv2
     credentials:
-      - type: string
+      - type: vaultToken
         id: vault-credentials
         env: VAULT_TOKEN
     when: tag=^v[0-9].*
