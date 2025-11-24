@@ -36,6 +36,22 @@ deploy:
     repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-dev.yaml
+    valuesTemplates:
+      - template: .ci/templates/values-secret.yaml.tpl
+        output: .ci/.rendered/values-dev.secret.yaml
+        vars:
+          SECRET_NAME: svc-feed-dev-secrets
+          DATABASE_URL:
+            vaultPath: kv/data/apps/dev
+            vaultField: DATABASE_URL
+        vault:
+          url: https://vault.leultewolde.com
+          tokenEnv: VAULT_TOKEN
+          engine: kv2
+    credentials:
+      - type: string
+        id: vault-credentials
+        env: VAULT_TOKEN
     when: branch=main & !pr
     autoPromote: true
     smoke:
@@ -52,6 +68,22 @@ deploy:
     repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-stg.yaml
+    valuesTemplates:
+      - template: .ci/templates/values-secret.yaml.tpl
+        output: .ci/.rendered/values-stg.secret.yaml
+        vars:
+          SECRET_NAME: svc-feed-stg-secrets
+          DATABASE_URL:
+            vaultPath: kv/data/apps/stg
+            vaultField: DATABASE_URL
+        vault:
+          url: https://vault.leultewolde.com
+          tokenEnv: VAULT_TOKEN
+          engine: kv2
+    credentials:
+      - type: string
+        id: vault-credentials
+        env: VAULT_TOKEN
     when: branch=main & !pr
     autoPromote: true
     approval:
@@ -72,6 +104,22 @@ deploy:
     repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-prd.yaml
+    valuesTemplates:
+      - template: .ci/templates/values-secret.yaml.tpl
+        output: .ci/.rendered/values-prd.secret.yaml
+        vars:
+          SECRET_NAME: svc-feed-secrets
+          DATABASE_URL:
+            vaultPath: kv/data/apps/prd
+            vaultField: DATABASE_URL
+        vault:
+          url: https://vault.leultewolde.com
+          tokenEnv: VAULT_TOKEN
+          engine: kv2
+    credentials:
+      - type: string
+        id: vault-credentials
+        env: VAULT_TOKEN
     when: tag=^v[0-9].*
     autoPromote: false
     approval:
