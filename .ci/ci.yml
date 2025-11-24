@@ -44,10 +44,10 @@ deploy:
           DATABASE_URL:
             vaultPath: kv/data/apps/dev
             vaultField: DATABASE_URL
-        vault:
-          url: https://vault.leultewolde.com
-          tokenEnv: VAULT_TOKEN
-          engine: kv2
+    vault:
+      url: https://vault.leultewolde.com
+      tokenEnv: VAULT_TOKEN
+      engine: kv2
     credentials:
       - type: string
         id: vault-credentials
@@ -76,10 +76,10 @@ deploy:
           DATABASE_URL:
             vaultPath: kv/data/apps/stg
             vaultField: DATABASE_URL
-        vault:
-          url: https://vault.leultewolde.com
-          tokenEnv: VAULT_TOKEN
-          engine: kv2
+    vault:
+      url: https://vault.leultewolde.com
+      tokenEnv: VAULT_TOKEN
+      engine: kv2
     credentials:
       - type: string
         id: vault-credentials
@@ -112,10 +112,10 @@ deploy:
           DATABASE_URL:
             vaultPath: kv/data/apps/prd
             vaultField: DATABASE_URL
-        vault:
-          url: https://vault.leultewolde.com
-          tokenEnv: VAULT_TOKEN
-          engine: kv2
+    vault:
+      url: https://vault.leultewolde.com
+      tokenEnv: VAULT_TOKEN
+      engine: kv2
     credentials:
       - type: string
         id: vault-credentials
