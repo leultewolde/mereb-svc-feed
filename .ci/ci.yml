@@ -108,7 +108,7 @@ deploy:
       - template: .ci/templates/values-secret.yaml.tpl
         output: .ci/.rendered/values-prd.secret.yaml
         vars:
-          SECRET_NAME: svc-feed-secrets
+          SECRET_NAME: svc-feed-prd-secrets
           DATABASE_URL:
             vaultPath: kv/data/apps/prd
             vaultField: DATABASE_URL
