@@ -52,7 +52,7 @@ configMap:
     OIDC_ISSUER: https://auth.mereb.app/realms/mereb
     OIDC_AUDIENCE: account
     REDIS_URL: redis://platform-dev-redis-master.platform-dev.svc.cluster.local:6379/2
-    KAFKA_BROKERS: platform-dev-redpanda-0.platform-dev-redpanda.platform-dev.svc.cluster.local:9092,platform-dev-redpanda-1.platform-dev-redpanda.platform-dev.svc.cluster.local:9092,platform-dev-redpanda-2.platform-dev-redpanda.platform-dev.svc.cluster.local:9092
+    KAFKA_BROKERS: platform-dev-redpanda-0.platform-dev-redpanda.platform-dev.svc.cluster.local:9092
 
 resources:
   requests:

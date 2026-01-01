@@ -1,9 +1,9 @@
 import path from 'node:path';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {createLogger} from '@mereb/shared-packages';
+import {createChildLogger} from './logger.js';
 
-const logger = createLogger('svc-feed-migrate');
+const logger = createChildLogger({module: 'migrate'});
 const execFileAsync = promisify(execFile);
 
 /**

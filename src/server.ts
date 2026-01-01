@@ -11,7 +11,6 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RedisClientType } from '@redis/client';
 import {
-  createLogger,
   getEnv,
   getRedisClient,
   loadEnv,
@@ -21,10 +20,11 @@ import {
 import type { KafkaConfig } from 'kafkajs';
 import { createResolvers } from './resolvers.js';
 import type { GraphQLContext } from './context.js';
+import { createChildLogger } from './logger.js';
 
 loadEnv();
 
-const logger = createLogger('svc-feed');
+const logger = createChildLogger({ module: 'server' });
 const typeDefsPath = join(
   dirname(fileURLToPath(import.meta.url)),
   '..',

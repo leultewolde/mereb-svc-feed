@@ -7,10 +7,11 @@ import {prisma} from './prisma.js';
 import type {GraphQLContext} from './context.js';
 import {getPostCache, invalidatePostCache, setPostCache} from './cache.js';
 import {decodeCursor, encodeCursor} from './utils/cursor.js';
-import {createLogger, signMediaUrl} from '@mereb/shared-packages';
+import {signMediaUrl} from '@mereb/shared-packages';
 import {emitPostCreated, emitPostLiked} from './kafka.js';
+import {createChildLogger} from './logger.js';
 
-const logger = createLogger('svc-feed-resolvers');
+const logger = createChildLogger({module: 'resolvers'});
 const MAX_LIMIT = 50;
 
 function parseAnyLiteral(ast: ValueNode): unknown {
@@ -345,7 +346,7 @@ export function createResolvers(deps: { kafkaConfig?: KafkaConfig | null }) {
                     take: limit + 1
                 });
 
-                if (rows.length === 0 && ownerId === 'anon') {
+                if (rows.length === 0) {
                     const fallback = await prisma.post.findMany({
                         orderBy: [{createdAt: 'desc'}, {id: 'desc'}],
                         take: limit + 1
