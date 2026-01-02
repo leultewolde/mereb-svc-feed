@@ -53,6 +53,8 @@ configMap:
     OIDC_AUDIENCE: account
     REDIS_URL: redis://platform-prd-redis-master.platform-prd.svc.cluster.local:6379/2
     KAFKA_BROKERS: platform-prd-redpanda-0.platform-prd-redpanda.platform-prd.svc.cluster.local:9092,platform-prd-redpanda-1.platform-prd-redpanda.platform-prd.svc.cluster.local:9092,platform-prd-redpanda-2.platform-prd-redpanda.platform-prd.svc.cluster.local:9092
+    SPLUNK_HEC_URL: https://splunk-hec.mereb.app/services/collector/event
+    SPLUNK_HEC_INDEX: logs-prd
 
 resources:
   requests:
