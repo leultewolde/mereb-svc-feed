@@ -1,12 +1,10 @@
 import { buildServer } from './server.js';
-import { loadThenGetEnvs } from '@mereb/shared-packages';
+import { loadThenGetEnvs, buildKafkaConfigFromEnv } from '@mereb/shared-packages';
 import { runMigrations } from './migrate.js';
 import { createChildLogger } from './logger.js';
 import { startHomeFeedWorker } from './homeFeedWorker.js';
-import type { KafkaConfig } from 'kafkajs';
 
-const {PORT, HOST, KAFKA_BROKERS} = loadThenGetEnvs({
-    path: '/custom/.env',
+const {PORT, HOST} = loadThenGetEnvs({
     envs: [
         { key: 'PORT', type: 'number', fallback: 4002 },
         { key: 'HOST', type: 'string', fallback: '0.0.0.0' },
@@ -15,12 +13,9 @@ const {PORT, HOST, KAFKA_BROKERS} = loadThenGetEnvs({
 });
 
 const logger = createChildLogger({ module: 'bootstrap' });
-const kafkaConfig: KafkaConfig | null = KAFKA_BROKERS
-    ? {
-        clientId: 'svc-feed',
-        brokers: KAFKA_BROKERS.split(',').map((broker) => broker.trim())
-    }
-    : null;
+const kafkaConfig = buildKafkaConfigFromEnv({
+    clientId: 'svc-feed'
+});
 
 if (!kafkaConfig) {
     logger.warn('KAFKA_BROKERS not set; home feed worker disabled');
@@ -30,9 +25,11 @@ try {
     await runMigrations();
 
     if (kafkaConfig) {
-        startHomeFeedWorker(kafkaConfig).catch((err) => {
+        try {
+            await startHomeFeedWorker(kafkaConfig);
+        } catch (err) {
             logger.error({err}, 'Failed to start home feed worker');
-        });
+        }
     }
 
     const app = await buildServer();
