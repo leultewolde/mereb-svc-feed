@@ -1,4 +1,4 @@
-import {createConsumer} from '@mereb/shared-packages';
+import {createConsumer, ensureTopicExists} from '@mereb/shared-packages';
 import type {Consumer, KafkaConfig} from 'kafkajs';
 import {prisma} from './prisma.js';
 import {createChildLogger} from './logger.js';
@@ -74,8 +74,9 @@ export async function startHomeFeedWorker(
         return null;
     }
 
-    const consumer = await createConsumer(kafkaConfig, getConsumerGroupId());
     const topic = getPostCreatedTopic();
+    await ensureTopicExists(kafkaConfig, topic, 1, 1);
+    const consumer = await createConsumer(kafkaConfig, getConsumerGroupId());
     await consumer.subscribe({topic, fromBeginning: false});
 
     consumer.run({
