@@ -81,6 +81,10 @@ export async function startHomeFeedWorker(
 
     consumer.run({
         eachMessage: async ({message, partition, topic}) => {
+            logger.info(
+                {topic, partition, offset: message.offset},
+                'Received Kafka message'
+            );
             const value = message.value?.toString();
             if (!value) {
                 logger.warn(
