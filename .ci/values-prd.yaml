@@ -1,6 +1,6 @@
 nameOverride: svc-feed
 
-replicaCount: 2
+replicaCount: 1
 
 imagePullSecrets:
   - regcred
