@@ -140,7 +140,8 @@ export function createResolvers(deps: { kafkaConfig?: KafkaConfig | null }) {
         createdAt: normalizeCreatedAt(post.createdAt),
         likeCount: await countLikes(post.id),
         likedByMe: await isLikedByUser(post.id, ctx.userId),
-        media: mapMedia(post.media)
+        media: mapMedia(post.media),
+        author: {id: post.authorId}
     });
 
     const resolvePostReference = async (
