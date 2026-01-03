@@ -132,6 +132,7 @@ type PostRecord = Post & { media: unknown };
 
 export function createResolvers(deps: { kafkaConfig?: KafkaConfig | null }) {
     const {kafkaConfig} = deps;
+    const MIN_FEED_SIZE = 5;
 
     const asUser = (user: unknown): { id: string } => user as { id: string };
     const enrichPost = async (post: PostRecord, ctx: GraphQLContext) => ({
@@ -389,10 +390,45 @@ export function createResolvers(deps: { kafkaConfig?: KafkaConfig | null }) {
                     node: Awaited<ReturnType<typeof enrichPost>>;
                 }>;
 
+                // If the feed is too sparse or dominated by a single author, blend in recent posts
+                const uniqueAuthors = new Set(
+                    filteredEdges.map((edge) => edge.node.author.id)
+                );
+                const needsSupplement =
+                    filteredEdges.length < MIN_FEED_SIZE ||
+                    uniqueAuthors.size <= 1;
+
+                let supplementedEdges = filteredEdges;
+                if (needsSupplement) {
+                    const existingIds = new Set(
+                        filteredEdges.map((edge) => edge.node.id)
+                    );
+                    const supplementCount = MIN_FEED_SIZE - filteredEdges.length + 3;
+                    const recentExtras = await prisma.post.findMany({
+                        where: {
+                            id: {notIn: Array.from(existingIds)},
+                            authorId: ctx.userId
+                                ? {not: ctx.userId}
+                                : undefined
+                        },
+                        orderBy: [{createdAt: 'desc'}, {id: 'desc'}],
+                        take: supplementCount
+                    });
+
+                    const extraEdges = await Promise.all(
+                        recentExtras.map(async (post: Post) => ({
+                            cursor: encodeCursor(post.createdAt, post.id),
+                            node: await enrichPost(post as PostRecord, ctx)
+                        }))
+                    );
+
+                    supplementedEdges = [...filteredEdges, ...extraEdges];
+                }
+
                 return {
-                    edges: filteredEdges,
+                    edges: supplementedEdges,
                     pageInfo: {
-                        endCursor: filteredEdges.at(-1)?.cursor ?? null,
+                        endCursor: supplementedEdges.at(-1)?.cursor ?? null,
                         hasNextPage: rows.length > limit
                     }
                 };
