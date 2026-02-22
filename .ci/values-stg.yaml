@@ -12,6 +12,12 @@ image:
       value: production
     - name: SERVICE_NAME
       value: svc-feed
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: http://otel-collector-stg.platform-stg.svc.cluster.local:4318
+    - name: OTEL_EXPORTER_OTLP_PROTOCOL
+      value: http/protobuf
+    - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
+      value: http/protobuf
   envFrom:
     - configMapRef:
         name: svc-feed-stg-config

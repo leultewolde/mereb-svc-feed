@@ -1,5 +1,5 @@
 import { buildServer } from './server.js';
-import { loadThenGetEnvs, buildKafkaConfigFromEnv } from '@mereb/shared-packages';
+import { loadThenGetEnvs, buildKafkaConfigFromEnv, initDefaultTelemetry } from '@mereb/shared-packages';
 import { runMigrations } from './migrate.js';
 import { createChildLogger } from './logger.js';
 import { startHomeFeedWorker } from './homeFeedWorker.js';
@@ -13,6 +13,7 @@ const {PORT, HOST} = loadThenGetEnvs({
 });
 
 const logger = createChildLogger({ module: 'bootstrap' });
+initDefaultTelemetry('svc-feed');
 const kafkaConfig = buildKafkaConfigFromEnv({
     clientId: 'svc-feed'
 });
