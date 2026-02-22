@@ -1,4 +1,4 @@
-FROM registry.leultewolde.com/mereb/mereb-node-base:v0.0.3 AS base
+FROM registry.leultewolde.com/mereb/mereb-node-base:v0.0.4 AS base
 
 COPY package.json pnpm-lock.yaml ./
 COPY prisma prisma
