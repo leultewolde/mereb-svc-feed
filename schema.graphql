@@ -7,6 +7,10 @@ directive @extends on OBJECT | INTERFACE
 
 scalar _Any
 
+type _Service {
+  sdl: String
+}
+
 type User @extends @key(fields: "id") {
   id: ID! @external
   posts(after: String, limit: Int = 20): PostConnection!
@@ -66,4 +70,5 @@ type Mutation {
 
 extend type Query {
   _entities(representations: [_Any!]!): [_Entity]!
+  _service: _Service!
 }
