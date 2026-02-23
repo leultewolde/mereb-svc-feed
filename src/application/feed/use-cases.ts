@@ -12,9 +12,11 @@ import type { FeedExecutionContext } from './context.js';
 import type {
   AdminContentMetrics,
   FeedEventPublisherPort,
+  FeedMutationPorts,
   FeedPostRecord,
   FeedPostView,
   FeedRepositoryPort,
+  FeedTransactionPort,
   MediaUrlSignerPort,
   PostCachePort,
   PostConnection
@@ -71,9 +73,27 @@ interface FeedDeps {
   postCache: PostCachePort;
   mediaUrlSigner: MediaUrlSignerPort;
   eventPublisher: FeedEventPublisherPort;
+  transactionRunner?: FeedTransactionPort;
 }
 
 type PostLikeViewerContext = Pick<FeedExecutionContext, 'principal'>;
+
+function getDefaultMutationPorts(deps: FeedDeps): FeedMutationPorts {
+  return {
+    repository: deps.repository,
+    eventPublisher: deps.eventPublisher
+  };
+}
+
+async function runInMutationTransaction<T>(
+  deps: FeedDeps,
+  callback: (ports: FeedMutationPorts) => Promise<T>
+): Promise<T> {
+  if (!deps.transactionRunner) {
+    return callback(getDefaultMutationPorts(deps));
+  }
+  return deps.transactionRunner.run(callback);
+}
 
 async function enrichPost(
   deps: FeedDeps,
@@ -304,31 +324,35 @@ export class FeedMutations {
   ): Promise<FeedPostView> {
     const userId = requireAuth(ctx);
     const mediaPayload = buildStoredPostMediaPayload(input.mediaKeys);
+    const post = await runInMutationTransaction(this.deps, async (ports) => {
+      const created = await ports.repository.createPost({
+        authorId: userId,
+        body: input.body,
+        media: mediaPayload
+      });
 
-    const post = await this.deps.repository.createPost({
-      authorId: userId,
-      body: input.body,
-      media: mediaPayload
+      await Promise.all([
+        ports.repository.upsertHomeFeedEntry({ ownerId: userId, postId: created.id }),
+        ports.repository.upsertHomeFeedEntry({ ownerId: 'anon', postId: created.id })
+      ]);
+
+      const event = postCreatedEvent({
+        postId: created.id,
+        authorId: created.authorId,
+        createdAt: created.createdAt,
+        visibility: created.visibility
+      });
+      await ports.eventPublisher.publishPostCreated({
+        postId: event.payload.postId,
+        authorId: event.payload.authorId,
+        createdAt: event.payload.createdAt,
+        visibility: event.payload.visibility
+      });
+
+      return created;
     });
 
-    await Promise.all([
-      this.deps.repository.upsertHomeFeedEntry({ ownerId: userId, postId: post.id }),
-      this.deps.repository.upsertHomeFeedEntry({ ownerId: 'anon', postId: post.id }),
-      this.deps.postCache.set(post)
-    ]);
-
-    const event = postCreatedEvent({
-      postId: post.id,
-      authorId: post.authorId,
-      createdAt: post.createdAt,
-      visibility: post.visibility
-    });
-    await this.deps.eventPublisher.publishPostCreated({
-      postId: event.payload.postId,
-      authorId: event.payload.authorId,
-      createdAt: event.payload.createdAt,
-      visibility: event.payload.visibility
-    });
+    await this.deps.postCache.set(post);
 
     return {
       id: post.id,
@@ -347,21 +371,22 @@ export class FeedMutations {
 
   async likePost(input: { id: string }, ctx: FeedExecutionContext): Promise<boolean> {
     const userId = requireAuth(ctx);
+    await runInMutationTransaction(this.deps, async (ports) => {
+      await ports.repository.upsertLike({
+        postId: input.id,
+        userId
+      });
 
-    await this.deps.repository.upsertLike({
-      postId: input.id,
-      userId
+      const event = postLikedEvent({
+        postId: input.id,
+        userId
+      });
+      await ports.eventPublisher.publishPostLiked({
+        postId: event.payload.postId,
+        userId: event.payload.userId
+      });
     });
     await this.deps.postCache.invalidate(input.id);
-
-    const event = postLikedEvent({
-      postId: input.id,
-      userId
-    });
-    await this.deps.eventPublisher.publishPostLiked({
-      postId: event.payload.postId,
-      userId: event.payload.userId
-    });
 
     return true;
   }
@@ -394,4 +419,3 @@ export function createFeedApplicationModule(deps: FeedDeps): FeedApplicationModu
     }
   };
 }
-

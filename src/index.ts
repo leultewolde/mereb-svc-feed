@@ -3,6 +3,7 @@ import { loadThenGetEnvs, buildKafkaConfigFromEnv, initDefaultTelemetry } from '
 import { runMigrations } from './migrate.js';
 import { createChildLogger } from './logger.js';
 import { startHomeFeedWorker } from './homeFeedWorker.js';
+import { startFeedOutboxRelay } from './bootstrap/outbox-relay.js';
 
 const {PORT, HOST} = loadThenGetEnvs({
     envs: [
@@ -32,6 +33,8 @@ try {
             logger.error({err}, 'Failed to start home feed worker');
         }
     }
+
+    startFeedOutboxRelay(kafkaConfig);
 
     const app = await buildServer();
     await app.listen({ port: PORT, host: HOST });

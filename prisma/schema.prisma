@@ -60,3 +60,20 @@ model InboxEvent {
   @@unique([consumerGroup, eventKey])
   @@index([consumerGroup, status])
 }
+
+model OutboxEvent {
+  id            String   @id
+  topic         String
+  eventKey      String?
+  payload       Json
+  status        String   @default("PENDING")
+  attempts      Int      @default(0)
+  nextAttemptAt DateTime @default(now())
+  lastError     String?
+  publishedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status, nextAttemptAt, createdAt])
+  @@index([createdAt])
+}

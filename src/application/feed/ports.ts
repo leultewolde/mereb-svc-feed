@@ -112,3 +112,11 @@ export interface FeedEventPublisherPort {
   }): Promise<void>;
 }
 
+export interface FeedMutationPorts {
+  repository: FeedRepositoryPort;
+  eventPublisher: FeedEventPublisherPort;
+}
+
+export interface FeedTransactionPort {
+  run<T>(callback: (ports: FeedMutationPorts) => Promise<T>): Promise<T>;
+}
