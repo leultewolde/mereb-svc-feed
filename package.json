@@ -9,15 +9,18 @@
     "clean": "rm -rf dist node_modules",
     "prebuild": "npm run prisma:generate",
     "dev": "tsx src/index.ts",
+    "dev:outbox": "tsx src/outboxRelayWorker.ts",
     "build": "tsc -b",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/**/*.test.ts",
     "start": "node dist/index.js",
+    "start:outbox": "node dist/outboxRelayWorker.js",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
     "@mereb/shared-packages": "^0.0.39",
     "@graphql-tools/schema": "^10.0.31",
     "@graphql-tools/utils": "^10.11.0",

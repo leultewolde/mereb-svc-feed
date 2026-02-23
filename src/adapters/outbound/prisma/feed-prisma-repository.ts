@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { Prisma, type Post, type PrismaClient } from '../../../../generated/client/index.js';
+import {
+  OutboxEventStatus,
+  Prisma,
+  type Post,
+  type PrismaClient
+} from '../../../../generated/client/index.js';
 import { prisma } from '../../../prisma.js';
 import type {
   FeedEventPublisherPort,
@@ -279,13 +284,21 @@ export interface PendingFeedOutboxEvent {
   attempts: number;
 }
 
+export interface FeedOutboxStatusCounts {
+  pending: number;
+  processing: number;
+  published: number;
+  failed: number;
+  deadLetter: number;
+}
+
 export class PrismaFeedOutboxRelayStore {
   constructor(private readonly db: FeedPrismaDb = prisma) {}
 
   async listDue(limit: number, now = new Date()): Promise<PendingFeedOutboxEvent[]> {
     const rows = await this.db.outboxEvent.findMany({
       where: {
-        status: { in: ['PENDING', 'FAILED'] },
+        status: { in: [OutboxEventStatus.PENDING, OutboxEventStatus.FAILED] },
         nextAttemptAt: { lte: now }
       },
       orderBy: [{ createdAt: 'asc' }],
@@ -305,10 +318,10 @@ export class PrismaFeedOutboxRelayStore {
     const result = await this.db.outboxEvent.updateMany({
       where: {
         id,
-        status: { in: ['PENDING', 'FAILED'] }
+        status: { in: [OutboxEventStatus.PENDING, OutboxEventStatus.FAILED] }
       },
       data: {
-        status: 'PROCESSING',
+        status: OutboxEventStatus.PROCESSING,
         attempts: { increment: 1 },
         lastError: null
       }
@@ -320,7 +333,7 @@ export class PrismaFeedOutboxRelayStore {
     await this.db.outboxEvent.updateMany({
       where: { id },
       data: {
-        status: 'PUBLISHED',
+        status: OutboxEventStatus.PUBLISHED,
         publishedAt,
         lastError: null
       }
@@ -331,12 +344,70 @@ export class PrismaFeedOutboxRelayStore {
     await this.db.outboxEvent.updateMany({
       where: { id },
       data: {
-        status: 'FAILED',
+        status: OutboxEventStatus.FAILED,
         lastError: error.slice(0, 4000),
         nextAttemptAt,
+        publishedAt: null,
+        deadLetteredAt: null,
+        deadLetterTopic: null
+      }
+    });
+  }
+
+  async markDeadLetter(
+    id: string,
+    error: string,
+    input?: { deadLetteredAt?: Date; deadLetterTopic?: string | null }
+  ): Promise<void> {
+    await this.db.outboxEvent.updateMany({
+      where: { id },
+      data: {
+        status: OutboxEventStatus.DEAD_LETTER,
+        lastError: error.slice(0, 4000),
+        deadLetteredAt: input?.deadLetteredAt ?? new Date(),
+        deadLetterTopic: input?.deadLetterTopic ?? null,
         publishedAt: null
       }
     });
+  }
+
+  async countByStatus(): Promise<FeedOutboxStatusCounts> {
+    const rows = await this.db.outboxEvent.groupBy({
+      by: ['status'],
+      _count: { _all: true }
+    });
+
+    const counts: FeedOutboxStatusCounts = {
+      pending: 0,
+      processing: 0,
+      published: 0,
+      failed: 0,
+      deadLetter: 0
+    };
+
+    for (const row of rows) {
+      switch (row.status) {
+        case OutboxEventStatus.PENDING:
+          counts.pending = row._count._all;
+          break;
+        case OutboxEventStatus.PROCESSING:
+          counts.processing = row._count._all;
+          break;
+        case OutboxEventStatus.PUBLISHED:
+          counts.published = row._count._all;
+          break;
+        case OutboxEventStatus.FAILED:
+          counts.failed = row._count._all;
+          break;
+        case OutboxEventStatus.DEAD_LETTER:
+          counts.deadLetter = row._count._all;
+          break;
+        default:
+          break;
+      }
+    }
+
+    return counts;
   }
 }
 
@@ -350,4 +421,3 @@ export class PrismaFeedTransactionRunner implements FeedTransactionPort {
     );
   }
 }
-

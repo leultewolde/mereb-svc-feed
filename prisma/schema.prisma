@@ -61,16 +61,26 @@ model InboxEvent {
   @@index([consumerGroup, status])
 }
 
+enum OutboxEventStatus {
+  PENDING
+  PROCESSING
+  PUBLISHED
+  FAILED
+  DEAD_LETTER
+}
+
 model OutboxEvent {
   id            String   @id
   topic         String
   eventKey      String?
   payload       Json
-  status        String   @default("PENDING")
+  status        OutboxEventStatus @default(PENDING)
   attempts      Int      @default(0)
   nextAttemptAt DateTime @default(now())
   lastError     String?
   publishedAt   DateTime?
+  deadLetteredAt DateTime?
+  deadLetterTopic String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
