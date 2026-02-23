@@ -42,3 +42,21 @@ model HomeFeed {
   @@id([ownerId, postId])
   @@index([ownerId, insertedAt, postId])
 }
+
+model InboxEvent {
+  id            String   @id @default(cuid())
+  consumerGroup String
+  topic         String
+  partition     Int?
+  offset        String?
+  eventId       String?
+  eventKey      String
+  status        String   @default("PROCESSING")
+  receivedAt    DateTime @default(now())
+  processedAt   DateTime?
+  lastError     String?
+  updatedAt     DateTime @updatedAt
+
+  @@unique([consumerGroup, eventKey])
+  @@index([consumerGroup, status])
+}
