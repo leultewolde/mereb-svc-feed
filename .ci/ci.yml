@@ -26,8 +26,11 @@ image:
 deploy:
   order:
     - dev
+    - dev_outbox
     - stg
+    - stg_outbox
     - prd
+    - prd_outbox
 
   dev:
     release: svc-feed-dev
@@ -44,7 +47,7 @@ deploy:
           SECRET_NAME: svc-feed-dev-secrets
           DATABASE_URL:
             vaultPath: kv/data/apps/dev
-            vaultField: DATABASE_URL
+            vaultField: FEED_DATABASE_URL
           SPLUNK_HEC_TOKEN:
             vaultPath: kv/data/apps/dev
             vaultField: SPLUNK_HEC_TOKEN
@@ -64,6 +67,19 @@ deploy:
       delay: 10
       timeout: 60s
 
+  dev_outbox:
+    release: svc-feed-dev-outbox
+    namespace: apps-dev
+    chart: app-chart
+    repo: https://charts.leultewolde.com
+    repoCredentialId: helm-chart-creds
+    valuesFiles:
+      - .ci/values-dev.yaml
+      - .ci/values-outbox-worker.yaml
+    when: branch=main & !pr
+    autoPromote: true
+    notes: "Dedicated outbox relay worker deployment"
+
   stg:
     release: svc-feed-stg
     namespace: apps-stg
@@ -79,7 +95,7 @@ deploy:
           SECRET_NAME: svc-feed-stg-secrets
           DATABASE_URL:
             vaultPath: kv/data/apps/stg
-            vaultField: DATABASE_URL
+            vaultField: FEED_DATABASE_URL
           SPLUNK_HEC_TOKEN:
             vaultPath: kv/data/apps/stg
             vaultField: SPLUNK_HEC_TOKEN
@@ -103,6 +119,19 @@ deploy:
       delay: 10
       timeout: 60s
 
+  stg_outbox:
+    release: svc-feed-stg-outbox
+    namespace: apps-stg
+    chart: app-chart
+    repo: https://charts.leultewolde.com
+    repoCredentialId: helm-chart-creds
+    valuesFiles:
+      - .ci/values-stg.yaml
+      - .ci/values-outbox-worker.yaml
+    when: branch=main & !pr
+    autoPromote: true
+    notes: "Dedicated outbox relay worker deployment"
+
   prd:
     release: svc-feed
     namespace: apps-prd
@@ -118,7 +147,7 @@ deploy:
           SECRET_NAME: svc-feed-prd-secrets
           DATABASE_URL:
             vaultPath: kv/data/apps/prd
-            vaultField: DATABASE_URL
+            vaultField: FEED_DATABASE_URL
           SPLUNK_HEC_TOKEN:
             vaultPath: kv/data/apps/prd
             vaultField: SPLUNK_HEC_TOKEN
@@ -140,6 +169,19 @@ deploy:
       retries: 3
       delay: 10
       timeout: 60s
+
+  prd_outbox:
+    release: svc-feed-outbox
+    namespace: apps-prd
+    chart: app-chart
+    repo: https://charts.leultewolde.com
+    repoCredentialId: helm-chart-creds
+    valuesFiles:
+      - .ci/values-prd.yaml
+      - .ci/values-outbox-worker.yaml
+    when: tag=^v[0-9].*
+    autoPromote: true
+    notes: "Dedicated outbox relay worker deployment"
 
 signing:
   enabled: false
