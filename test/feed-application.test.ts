@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
   createFeedApplicationModule
@@ -172,3 +172,189 @@ test('likePost/unlikePost require auth and invalidate cache', async () => {
   assert.equal(likedEvents.length, 1);
 });
 
+test('feed queries enrich posts from cache and repositories', async () => {
+  const cached = postRecord({
+    id: 'cached-post',
+    authorId: 'author-1',
+    media: [{ type: 'image', key: 'image.jpg' }]
+  });
+  const uncached = postRecord({
+    id: 'uncached-post',
+    authorId: 'author-2',
+    media: [{ type: 'video', url: 'https://cdn.test/video.mp4' }],
+    createdAt: new Date('2026-02-02T00:00:00.000Z')
+  });
+  const cacheSets: string[] = [];
+
+  const feed = createFeedApplicationModule({
+    repository: createRepositoryStub({
+      async findPostById(id) {
+        return id === 'uncached-post' ? uncached : null;
+      },
+      async listPostsByAuthor(input) {
+        assert.equal(input.authorId, 'author-2');
+        assert.equal(input.take, 3);
+        assert.equal(input.cursor, undefined);
+        return [uncached, cached];
+      },
+      async countLikesForPost(postId) {
+        return postId === 'cached-post' ? 4 : 2;
+      },
+      async isLikedByUser(postId, userId) {
+        return postId === 'cached-post' && userId === 'viewer-1';
+      }
+    }),
+    postCache: createCacheStub({
+      async get(postId) {
+        return postId === 'cached-post' ? cached : null;
+      },
+      async set(post) {
+        cacheSets.push(post.id);
+      }
+    }),
+    mediaUrlSigner: {
+      signMediaUrl(key: string) {
+        return `signed:${key}`;
+      }
+    },
+    eventPublisher: {
+      async publishPostCreated() {
+        return;
+      },
+      async publishPostLiked() {
+        return;
+      }
+    }
+  });
+
+  const ctx = feed.helpers.toExecutionContext({ userId: 'viewer-1' });
+  const cachedResult = await feed.queries.post('cached-post', ctx);
+  const uncachedResult = await feed.queries.resolvePostReference('uncached-post', ctx);
+  const userPosts = await feed.queries.userPosts('author-2', { limit: 2 }, ctx);
+
+  assert.equal(cachedResult?.likeCount, 4);
+  assert.equal(cachedResult?.likedByMe, true);
+  assert.deepEqual(cachedResult?.media, [{ type: 'image', url: 'signed:image.jpg' }]);
+  assert.equal(uncachedResult?.media[0]?.url, 'https://cdn.test/video.mp4');
+  assert.equal(userPosts.edges.length, 2);
+  assert.equal(userPosts.pageInfo.hasNextPage, false);
+  assert.deepEqual(cacheSets, ['uncached-post', 'uncached-post', 'cached-post']);
+  assert.deepEqual(feed.queries.resolveUserReference('user-9'), { id: 'user-9' });
+  assert.equal(await feed.queries.postLikeCount('cached-post'), 4);
+  assert.equal(await feed.queries.postLikedByViewer('cached-post', {}), false);
+  assert.equal(await feed.queries.postLikedByViewer('cached-post', ctx), true);
+  assert.deepEqual(await feed.queries.postMedia({ media: ['bad'] }), []);
+});
+
+test('feed queries compute metrics and fallback home feed when no home rows exist', async () => {
+  const cacheSets: string[] = [];
+  const fallbackPost = postRecord({ id: 'fallback-post' });
+
+  const feed = createFeedApplicationModule({
+    repository: createRepositoryStub({
+      async countPosts() {
+        return 10;
+      },
+      async countPostsCreatedSince() {
+        return 3;
+      },
+      async countLikes() {
+        return 7;
+      },
+      async listRecentPosts(input) {
+        if (input.take === 2) {
+          return [fallbackPost];
+        }
+        return [fallbackPost];
+      },
+      async listHomeFeed() {
+        return [];
+      },
+      async countLikesForPost() {
+        return 1;
+      }
+    }),
+    postCache: createCacheStub({
+      async set(post) {
+        cacheSets.push(post.id);
+      }
+    }),
+    mediaUrlSigner: { signMediaUrl: (key: string) => key },
+    eventPublisher: {
+      async publishPostCreated() {
+        return;
+      },
+      async publishPostLiked() {
+        return;
+      }
+    }
+  });
+
+  const metrics = await feed.queries.adminContentMetrics();
+  const recent = await feed.queries.adminRecentPosts({ limit: 99 }, {});
+  const home = await feed.queries.feedHome({ limit: 1 }, {});
+
+  assert.deepEqual(metrics, { totalPosts: 10, postsLast24h: 3, totalLikes: 7 });
+  assert.equal(recent.length, 1);
+  assert.equal(home.edges.length, 1);
+  assert.equal(home.pageInfo.hasNextPage, false);
+  assert.deepEqual(cacheSets, ['fallback-post', 'fallback-post']);
+});
+
+test('feedHome supplements sparse home rows with recent posts', async () => {
+  const basePost = postRecord({ id: 'post-1', authorId: 'author-1' });
+  const extraPost = postRecord({
+    id: 'post-2',
+    authorId: 'author-2',
+    createdAt: new Date('2026-02-02T00:00:00.000Z')
+  });
+
+  const feed = createFeedApplicationModule({
+    repository: createRepositoryStub({
+      async listHomeFeed() {
+        return [
+          {
+            ownerId: 'viewer-1',
+            postId: 'post-1',
+            rank: 1,
+            insertedAt: new Date('2026-02-03T00:00:00.000Z')
+          }
+        ];
+      },
+      async findPostById(id) {
+        return id === 'post-1' ? basePost : null;
+      },
+      async listRecentPosts(input) {
+        assert.deepEqual(input.excludeIds, ['post-1']);
+        assert.equal(input.excludeAuthorId, 'viewer-1');
+        return [extraPost];
+      },
+      async countLikesForPost() {
+        return 0;
+      },
+      async isLikedByUser() {
+        return false;
+      }
+    }),
+    postCache: createCacheStub(),
+    mediaUrlSigner: { signMediaUrl: (key: string) => key },
+    eventPublisher: {
+      async publishPostCreated() {
+        return;
+      },
+      async publishPostLiked() {
+        return;
+      }
+    }
+  });
+
+  const home = await feed.queries.feedHome(
+    { after: undefined, limit: 2 },
+    feed.helpers.toExecutionContext({ userId: 'viewer-1' })
+  );
+
+  assert.deepEqual(
+    home.edges.map((edge) => edge.node.id),
+    ['post-1', 'post-2']
+  );
+});

@@ -1,6 +1,11 @@
 version: 1
 preset: node
 
+delivery:
+  mode: staged
+  pr:
+    deployToStg: false
+
 build:
   pnpm:
     nodeVersion: 20.19.2
@@ -8,6 +13,14 @@ build:
     steps:
       - type: lint
         name: Lint service sources
+      - type: typecheck
+        name: Typecheck service package
+      - type: test
+        name: Run unit tests
+        command: test:unit
+      - type: test
+        name: Run integration tests
+        command: test:integration
       - type: build
         name: Build service package
 
@@ -16,7 +29,7 @@ image:
   context: .
   dockerfile: Dockerfile
   tagStrategy: branch-sha
-  tagTemplate: "{{tagName}}"
+  verifyPull: true
   push:
     enabled: true
     when: '!pr'
@@ -59,8 +72,6 @@ deploy:
       - type: vaultToken
         id: vault-credentials
         env: VAULT_TOKEN
-    when: branch=main & !pr
-    autoPromote: true
     smoke:
       url: https://api-dev.mereb.app/feed/healthz
       retries: 3
@@ -76,8 +87,6 @@ deploy:
     valuesFiles:
       - .ci/values-dev.yaml
       - .ci/values-outbox-worker.yaml
-    when: branch=main & !pr
-    autoPromote: true
     notes: "Dedicated outbox relay worker deployment"
 
   stg:
@@ -107,12 +116,6 @@ deploy:
       - type: vaultToken
         id: vault-credentials
         env: VAULT_TOKEN
-    when: branch=main & !pr
-    autoPromote: true
-    approval:
-      before: true
-      message: "Promote svc-feed deployment to staging?"
-      submitter: release-managers
     smoke:
       url: https://api-stg.mereb.app/feed/healthz
       retries: 3
@@ -128,8 +131,6 @@ deploy:
     valuesFiles:
       - .ci/values-stg.yaml
       - .ci/values-outbox-worker.yaml
-    when: branch=main & !pr
-    autoPromote: true
     notes: "Dedicated outbox relay worker deployment"
 
   prd:
@@ -159,11 +160,6 @@ deploy:
       - type: vaultToken
         id: vault-credentials
         env: VAULT_TOKEN
-    when: tag=^v[0-9].*
-    autoPromote: false
-    approval:
-      message: "Deploy svc-feed to production?"
-      submitter: release-managers
     smoke:
       url: https://api.mereb.app/feed/healthz
       retries: 3
@@ -179,8 +175,7 @@ deploy:
     valuesFiles:
       - .ci/values-prd.yaml
       - .ci/values-outbox-worker.yaml
-    when: tag=^v[0-9].*
-    autoPromote: true
+      - .ci/values-prd-outbox-worker.yaml
     notes: "Dedicated outbox relay worker deployment"
 
 signing:
@@ -199,7 +194,6 @@ release:
     clean: false
     allowDirty: true
     skipIfTagged: true
-    afterEnvironment: stg
   github:
     enabled: true
     when: tag=^v[0-9].*

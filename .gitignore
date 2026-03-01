@@ -17,3 +17,4 @@ yarn-debug.log*
 generated/
 prisma/dev.db
 prisma/dev.db-journal
+/coverage/

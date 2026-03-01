@@ -11,6 +11,12 @@ export interface FeedOutboxRelayStartOptions {
   intervalMs?: number;
 }
 
+export interface FeedOutboxFlushOptions {
+  kafkaConfig: KafkaConfig;
+  limit?: number;
+  store?: PrismaFeedOutboxRelayStore;
+}
+
 function isRelayEnabled(): boolean {
   return (process.env.FEED_OUTBOX_RELAY_ENABLED ?? 'true') === 'true';
 }
@@ -86,8 +92,11 @@ async function publishToDlq(
   return dlqTopic;
 }
 
-async function flushOnce(kafkaConfig: KafkaConfig, limit = 50): Promise<void> {
-  const store = new PrismaFeedOutboxRelayStore();
+async function flushOnce(
+  kafkaConfig: KafkaConfig,
+  limit = 50,
+  store = new PrismaFeedOutboxRelayStore()
+): Promise<void> {
   const producer = await getProducer(kafkaConfig);
   const due = await store.listDue(limit);
   const maxAttempts = getMaxAttempts();
@@ -232,4 +241,10 @@ export function startFeedOutboxRelay(
   logger.info({ intervalMs }, 'Feed outbox relay started');
 
   return () => clearInterval(timer);
+}
+
+export async function flushFeedOutboxOnce(
+  input: FeedOutboxFlushOptions
+): Promise<void> {
+  await flushOnce(input.kafkaConfig, input.limit ?? 50, input.store);
 }

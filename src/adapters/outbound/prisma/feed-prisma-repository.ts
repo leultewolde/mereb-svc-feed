@@ -412,8 +412,10 @@ export class PrismaFeedOutboxRelayStore {
 }
 
 export class PrismaFeedTransactionRunner implements FeedTransactionPort {
+  constructor(private readonly db: PrismaClient = prisma) {}
+
   async run<T>(callback: (ports: FeedMutationPorts) => Promise<T>): Promise<T> {
-    return prisma.$transaction(async (tx) =>
+    return this.db.$transaction(async (tx) =>
       callback({
         repository: new PrismaFeedRepository(tx),
         eventPublisher: new PrismaFeedOutboxEventPublisher(tx)

@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
   buildStoredPostMediaPayload,
@@ -21,6 +21,8 @@ test('normalizeCreatedAt returns ISO string for common inputs', () => {
   const now = new Date('2026-02-01T00:00:00.000Z');
   assert.equal(normalizeCreatedAt(now), '2026-02-01T00:00:00.000Z');
   assert.equal(normalizeCreatedAt('2026-02-01T00:00:00.000Z'), '2026-02-01T00:00:00.000Z');
+  assert.equal(normalizeCreatedAt(now.getTime()), '2026-02-01T00:00:00.000Z');
+  assert.equal(normalizeCreatedAt(String(now.getTime())), '2026-02-01T00:00:00.000Z');
 });
 
 test('feed domain errors/events preserve expected shapes', () => {
@@ -40,4 +42,3 @@ test('feed domain errors/events preserve expected shapes', () => {
   assert.equal(liked.type, 'PostLiked');
   assert.equal(liked.payload.userId, 'u2');
 });
-
