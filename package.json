@@ -8,6 +8,8 @@
   "scripts": {
     "clean": "rm -rf dist node_modules",
     "prebuild": "npm run prisma:generate",
+    "pretypecheck": "npm run prisma:generate",
+    "pretest:integration": "npm run prisma:generate",
     "dev": "tsx src/index.ts",
     "dev:outbox": "tsx src/outboxRelayWorker.ts",
     "build": "tsc -b",
