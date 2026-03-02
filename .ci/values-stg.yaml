@@ -18,6 +18,11 @@ image:
       value: http/protobuf
     - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
       value: http/protobuf
+    - name: OIDC_ISSUER
+      valueFrom:
+        configMapKeyRef:
+          name: platform-identity-stg
+          key: OIDC_ISSUER
   envFrom:
     - configMapRef:
         name: svc-feed-stg-config
@@ -55,7 +60,6 @@ configMap:
   nameOverride: svc-feed-stg-config
   data:
     PORT: "4002"
-    OIDC_ISSUER: https://auth.mereb.app/realms/mereb
     OIDC_AUDIENCE: account
     REDIS_URL: redis://platform-stg-redis-master.platform-stg.svc.cluster.local:6379/2
     KAFKA_BROKERS: platform-stg-redpanda-0.platform-stg-redpanda.platform-stg.svc.cluster.local:9092
