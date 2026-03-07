@@ -1,7 +1,10 @@
 import type { IResolvers } from '@graphql-tools/utils';
 import { GraphQLScalarType, Kind, type ValueNode } from 'graphql';
 import type { GraphQLContext } from '../../../context.js';
-import { UnauthenticatedError } from '../../../domain/feed/errors.js';
+import {
+  InvalidMediaAssetError,
+  UnauthenticatedError
+} from '../../../domain/feed/errors.js';
 import type { FeedApplicationModule } from '../../../application/feed/use-cases.js';
 
 function parseAnyLiteral(ast: ValueNode): unknown {
@@ -40,6 +43,9 @@ const AnyScalar = new GraphQLScalarType({
 
 function toGraphQLError(error: unknown): never {
   if (error instanceof UnauthenticatedError) {
+    throw new Error(error.message);
+  }
+  if (error instanceof InvalidMediaAssetError) {
     throw new Error(error.message);
   }
   throw error;
@@ -146,10 +152,18 @@ export function createResolvers(
         feed.queries.feedHome({ after: args.after, limit: args.limit }, feed.helpers.toExecutionContext(ctx))
     },
     Mutation: {
-      createPost: async (_source: unknown, args: { body: string; mediaKeys?: string[] }, ctx) => {
+      createPost: async (
+        _source: unknown,
+        args: { body: string; mediaKeys?: string[]; mediaAssetIds?: string[] },
+        ctx
+      ) => {
         try {
           return await feed.mutations.createPost(
-            { body: args.body, mediaKeys: args.mediaKeys },
+            {
+              body: args.body,
+              mediaKeys: args.mediaKeys,
+              mediaAssetIds: args.mediaAssetIds
+            },
             feed.helpers.toExecutionContext(ctx)
           );
         } catch (error) {
@@ -173,4 +187,3 @@ export function createResolvers(
     }
   } as IResolvers<Record<string, unknown>, GraphQLContext>;
 }
-

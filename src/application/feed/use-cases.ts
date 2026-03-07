@@ -1,6 +1,9 @@
 import type { GraphQLContext } from '../../context.js';
 import { decodeCursor, encodeCursor } from '../../utils/cursor.js';
-import { UnauthenticatedError } from '../../domain/feed/errors.js';
+import {
+  InvalidMediaAssetError,
+  UnauthenticatedError
+} from '../../domain/feed/errors.js';
 import { postCreatedEvent, postLikedEvent } from '../../domain/feed/events.js';
 import {
   buildStoredPostMediaPayload,
@@ -13,6 +16,7 @@ import type {
   AdminContentMetrics,
   FeedEventPublisherPort,
   FeedMutationPorts,
+  MediaAssetResolverPort,
   FeedPostRecord,
   FeedPostView,
   FeedRepositoryPort,
@@ -72,6 +76,7 @@ interface FeedDeps {
   repository: FeedRepositoryPort;
   postCache: PostCachePort;
   mediaUrlSigner: MediaUrlSignerPort;
+  mediaAssetResolver?: MediaAssetResolverPort;
   eventPublisher: FeedEventPublisherPort;
   transactionRunner?: FeedTransactionPort;
 }
@@ -318,12 +323,39 @@ export class FeedQueries {
 export class FeedMutations {
   constructor(private readonly deps: FeedDeps) {}
 
+  private async resolveMediaKeys(input: {
+    mediaKeys?: string[];
+    mediaAssetIds?: string[];
+  }, userId: string): Promise<string[]> {
+    const keySet = new Set(input.mediaKeys ?? []);
+    const mediaAssetIds = input.mediaAssetIds ?? [];
+
+    if (mediaAssetIds.length === 0) {
+      return Array.from(keySet);
+    }
+
+    if (!this.deps.mediaAssetResolver) {
+      throw new InvalidMediaAssetError('INVALID_MEDIA_ASSET_RESOLVER');
+    }
+
+    for (const assetId of mediaAssetIds) {
+      const resolved = await this.deps.mediaAssetResolver.resolveOwnedReadyAsset({
+        assetId,
+        userId
+      });
+      keySet.add(resolved.key);
+    }
+
+    return Array.from(keySet);
+  }
+
   async createPost(
-    input: { body: string; mediaKeys?: string[] },
+    input: { body: string; mediaKeys?: string[]; mediaAssetIds?: string[] },
     ctx: FeedExecutionContext
   ): Promise<FeedPostView> {
     const userId = requireAuth(ctx);
-    const mediaPayload = buildStoredPostMediaPayload(input.mediaKeys);
+    const mediaKeys = await this.resolveMediaKeys(input, userId);
+    const mediaPayload = buildStoredPostMediaPayload(mediaKeys);
     const post = await runInMutationTransaction(this.deps, async (ports) => {
       const created = await ports.repository.createPost({
         authorId: userId,

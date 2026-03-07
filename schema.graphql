@@ -63,7 +63,7 @@ type Query {
 }
 
 type Mutation {
-  createPost(body: String!, mediaKeys: [String!]): Post!
+  createPost(body: String!, mediaKeys: [String!], mediaAssetIds: [ID!]): Post!
   likePost(id: ID!): Boolean!
   unlikePost(id: ID!): Boolean!
 }

@@ -11,6 +11,7 @@ import {
 } from '../adapters/outbound/prisma/feed-prisma-repository.js';
 import { RedisPostCacheAdapter } from '../adapters/outbound/cache/redis-post-cache.js';
 import { SharedMediaUrlSignerAdapter } from '../adapters/outbound/media/shared-media-url-signer.js';
+import { HttpMediaAssetResolverAdapter } from '../adapters/outbound/media/http-media-asset-resolver.js';
 import { createFeedEventPublisherAdapter } from '../adapters/outbound/events/feed-event-publisher.js';
 
 export interface FeedContainer {
@@ -24,6 +25,7 @@ export function createContainer(input: {
   const repository = new PrismaFeedRepository();
   const postCache = new RedisPostCacheAdapter(input.redis);
   const mediaUrlSigner = new SharedMediaUrlSignerAdapter();
+  const mediaAssetResolver = new HttpMediaAssetResolverAdapter();
   const useOutbox = Boolean(input.kafkaConfig);
   const eventPublisher = useOutbox
     ? new PrismaFeedOutboxEventPublisher()
@@ -35,6 +37,7 @@ export function createContainer(input: {
       repository,
       postCache,
       mediaUrlSigner,
+      mediaAssetResolver,
       eventPublisher,
       transactionRunner
     })

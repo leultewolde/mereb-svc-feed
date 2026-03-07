@@ -99,6 +99,13 @@ export interface MediaUrlSignerPort {
   signMediaUrl(key: string): string;
 }
 
+export interface MediaAssetResolverPort {
+  resolveOwnedReadyAsset(input: {
+    assetId: string;
+    userId: string;
+  }): Promise<{ key: string }>;
+}
+
 export interface FeedEventPublisherPort {
   publishPostCreated(input: {
     postId: string;

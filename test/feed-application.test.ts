@@ -138,6 +138,62 @@ test('createPost seeds home feed/cache and emits post.created event', async () =
   assert.equal(eventCalls.length, 1);
 });
 
+test('createPost resolves mediaAssetIds and deduplicates keys', async () => {
+  const resolvedCalls: Array<{ assetId: string; userId: string }> = [];
+
+  const feed = createFeedApplicationModule({
+    repository: createRepositoryStub({
+      async createPost(input) {
+        return postRecord({
+          authorId: input.authorId,
+          body: input.body,
+          media: input.media
+        });
+      }
+    }),
+    postCache: createCacheStub(),
+    mediaUrlSigner: {
+      signMediaUrl(key: string) {
+        return `signed:${key}`;
+      }
+    },
+    mediaAssetResolver: {
+      async resolveOwnedReadyAsset(input) {
+        resolvedCalls.push(input);
+        return {
+          key: input.assetId === 'asset-1' ? 'a.jpg' : 'b.jpg'
+        };
+      }
+    },
+    eventPublisher: {
+      async publishPostCreated() {
+        return;
+      },
+      async publishPostLiked() {
+        return;
+      }
+    }
+  });
+
+  const created = await feed.mutations.createPost(
+    {
+      body: 'Hello',
+      mediaKeys: ['a.jpg'],
+      mediaAssetIds: ['asset-1', 'asset-2']
+    },
+    feed.helpers.toExecutionContext({ userId: 'user-1' })
+  );
+
+  assert.deepEqual(resolvedCalls, [
+    { assetId: 'asset-1', userId: 'user-1' },
+    { assetId: 'asset-2', userId: 'user-1' }
+  ]);
+  assert.deepEqual(created.media, [
+    { type: 'image', url: 'signed:a.jpg' },
+    { type: 'image', url: 'signed:b.jpg' }
+  ]);
+});
+
 test('likePost/unlikePost require auth and invalidate cache', async () => {
   const invalidated: string[] = [];
   const likedEvents: Array<unknown> = [];

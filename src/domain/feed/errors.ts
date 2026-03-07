@@ -5,3 +5,9 @@ export class UnauthenticatedError extends Error {
   }
 }
 
+export class InvalidMediaAssetError extends Error {
+  constructor(message = 'INVALID_MEDIA_ASSET') {
+    super(message);
+    this.name = 'InvalidMediaAssetError';
+  }
+}

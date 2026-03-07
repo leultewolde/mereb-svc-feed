@@ -61,6 +61,7 @@ configMap:
   data:
     PORT: "4002"
     OIDC_AUDIENCE: account
+    MEDIA_SERVICE_URL: http://svc-media-stg.apps-stg.svc.cluster.local
     REDIS_URL: redis://platform-stg-redis-master.platform-stg.svc.cluster.local:6379/2
     KAFKA_BROKERS: platform-stg-redpanda-0.platform-stg-redpanda.platform-stg.svc.cluster.local:9092
     KAFKA_SSL: "true"
