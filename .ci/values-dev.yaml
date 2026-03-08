@@ -63,6 +63,7 @@ configMap:
     PORT: "4002"
     OIDC_AUDIENCE: account
     MEDIA_SERVICE_URL: http://svc-media-dev.apps-dev.svc.cluster.local
+    MEDIA_CDN_ORIGIN: https://uploads-dev.mereb.app/media-dev
     REDIS_URL: redis://platform-dev-redis-master.platform-dev.svc.cluster.local:6379/2
     KAFKA_BROKERS: platform-dev-redpanda-0.platform-dev-redpanda.platform-dev.svc.cluster.local:9092
     KAFKA_SSL: "true"
