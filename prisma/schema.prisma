@@ -15,11 +15,16 @@ model Post {
   body       String   @db.Text
   media      Json?
   visibility String   @default("public")
+  status     PostStatus @default(ACTIVE)
+  hiddenAt   DateTime?
+  hiddenReason PostHiddenReason?
   createdAt  DateTime @default(now())
 
   likes Like[]
 
   @@index([createdAt, id])
+  @@index([status, createdAt, id])
+  @@index([authorId, status, createdAt, id])
 }
 
 model Like {
@@ -86,4 +91,14 @@ model OutboxEvent {
 
   @@index([status, nextAttemptAt, createdAt])
   @@index([createdAt])
+}
+
+enum PostStatus {
+  ACTIVE
+  HIDDEN
+}
+
+enum PostHiddenReason {
+  ADMIN_HIDDEN
+  USER_DEACTIVATED
 }

@@ -4,6 +4,9 @@ export interface FeedMediaRecord {
   key?: string;
 }
 
+export type AdminPostStatus = 'ACTIVE' | 'HIDDEN';
+export type AdminPostHiddenReason = 'ADMIN_HIDDEN' | 'USER_DEACTIVATED';
+
 export interface FeedMediaView {
   type: string;
   url: string;
@@ -48,4 +51,3 @@ export function normalizeCreatedAt(input: unknown): string {
   }
   return new Date().toISOString();
 }
-

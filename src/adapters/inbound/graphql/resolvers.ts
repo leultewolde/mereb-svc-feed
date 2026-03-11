@@ -2,6 +2,8 @@ import type { IResolvers } from '@graphql-tools/utils';
 import { GraphQLScalarType, Kind, type ValueNode } from 'graphql';
 import type { GraphQLContext } from '../../../context.js';
 import {
+  FeedPostNotFoundError,
+  ForbiddenError,
   InvalidMediaAssetError,
   UnauthenticatedError
 } from '../../../domain/feed/errors.js';
@@ -43,6 +45,12 @@ const AnyScalar = new GraphQLScalarType({
 
 function toGraphQLError(error: unknown): never {
   if (error instanceof UnauthenticatedError) {
+    throw new Error(error.message);
+  }
+  if (error instanceof ForbiddenError) {
+    throw new Error(error.message);
+  }
+  if (error instanceof FeedPostNotFoundError) {
     throw new Error(error.message);
   }
   if (error instanceof InvalidMediaAssetError) {
@@ -122,12 +130,33 @@ export function createResolvers(
         return feed.queries.postLikedByViewer((post as { id: string }).id, feed.helpers.toExecutionContext(ctx));
       }
     },
+    AdminPost: {
+      author: (post: unknown) => ({
+        __typename: 'User',
+        id: (post as { authorId: string }).authorId
+      })
+    },
     Query: {
       post: (_source: unknown, args: { id: string }, ctx) =>
         feed.queries.post(args.id, feed.helpers.toExecutionContext(ctx)),
-      adminContentMetrics: () => feed.queries.adminContentMetrics(),
+      adminContentMetrics: (_source: unknown, _args: unknown, ctx) =>
+        feed.queries.adminContentMetrics(feed.helpers.toExecutionContext(ctx)),
       adminRecentPosts: (_source: unknown, args: { limit?: number }, ctx) =>
         feed.queries.adminRecentPosts({ limit: args.limit }, feed.helpers.toExecutionContext(ctx)),
+      adminPosts: (
+        _source: unknown,
+        args: { query?: string; status?: 'ACTIVE' | 'HIDDEN'; after?: string; limit?: number },
+        ctx
+      ) =>
+        feed.queries.adminPosts(
+          {
+            query: args.query,
+            status: args.status,
+            after: args.after,
+            limit: args.limit
+          },
+          feed.helpers.toExecutionContext(ctx)
+        ),
       _entities: async (
         _source: unknown,
         args: { representations: Array<{ __typename?: string; id?: string }> },
@@ -180,6 +209,20 @@ export function createResolvers(
       unlikePost: async (_source: unknown, args: { id: string }, ctx) => {
         try {
           return await feed.mutations.unlikePost({ id: args.id }, feed.helpers.toExecutionContext(ctx));
+        } catch (error) {
+          toGraphQLError(error);
+        }
+      },
+      adminHidePost: async (_source: unknown, args: { postId: string }, ctx) => {
+        try {
+          return await feed.mutations.adminHidePost({ postId: args.postId }, feed.helpers.toExecutionContext(ctx));
+        } catch (error) {
+          toGraphQLError(error);
+        }
+      },
+      adminRestorePost: async (_source: unknown, args: { postId: string }, ctx) => {
+        try {
+          return await feed.mutations.adminRestorePost({ postId: args.postId }, feed.helpers.toExecutionContext(ctx));
         } catch (error) {
           toGraphQLError(error);
         }

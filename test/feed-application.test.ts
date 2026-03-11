@@ -19,6 +19,9 @@ function postRecord(overrides: Partial<FeedPostRecord> = {}): FeedPostRecord {
     body: 'Hello',
     media: [],
     visibility: 'public',
+    status: 'ACTIVE',
+    hiddenAt: null,
+    hiddenReason: null,
     createdAt: new Date('2026-02-01T00:00:00.000Z'),
     ...overrides
   };
@@ -29,10 +32,16 @@ function createRepositoryStub(overrides: Partial<FeedRepositoryPort> = {}): Feed
     async findPostById() {
       return null;
     },
+    async findAdminPostById() {
+      return null;
+    },
     async listPostsByAuthor() {
       return [];
     },
     async listRecentPosts() {
+      return [];
+    },
+    async listAdminPosts() {
       return [];
     },
     async listHomeFeed() {
@@ -49,6 +58,15 @@ function createRepositoryStub(overrides: Partial<FeedRepositoryPort> = {}): Feed
     },
     async countPostsCreatedSince() {
       return 0;
+    },
+    async updateAdminPostStatus() {
+      return null;
+    },
+    async updateAdminPostsForAuthor() {
+      return [];
+    },
+    async restoreAuthorPostsHiddenByDeactivation() {
+      return [];
     },
     async countLikes() {
       return 0;
@@ -308,8 +326,8 @@ test('feed queries compute metrics and fallback home feed when no home rows exis
 
   const feed = createFeedApplicationModule({
     repository: createRepositoryStub({
-      async countPosts() {
-        return 10;
+      async countPosts(input) {
+        return input?.status === 'HIDDEN' ? 2 : 10;
       },
       async countPostsCreatedSince() {
         return 3;
@@ -321,6 +339,9 @@ test('feed queries compute metrics and fallback home feed when no home rows exis
         if (input.take === 2) {
           return [fallbackPost];
         }
+        return [fallbackPost];
+      },
+      async listAdminPosts() {
         return [fallbackPost];
       },
       async listHomeFeed() {
@@ -346,15 +367,85 @@ test('feed queries compute metrics and fallback home feed when no home rows exis
     }
   });
 
-  const metrics = await feed.queries.adminContentMetrics();
-  const recent = await feed.queries.adminRecentPosts({ limit: 99 }, {});
+  const adminCtx = feed.helpers.toExecutionContext({ userId: 'admin-1', roles: ['admin'] });
+  const metrics = await feed.queries.adminContentMetrics(adminCtx);
+  const recent = await feed.queries.adminRecentPosts({ limit: 99 }, adminCtx);
   const home = await feed.queries.feedHome({ limit: 1 }, {});
 
-  assert.deepEqual(metrics, { totalPosts: 10, postsLast24h: 3, totalLikes: 7 });
+  assert.deepEqual(metrics, { totalPosts: 10, hiddenPosts: 2, postsLast24h: 3, totalLikes: 7 });
   assert.equal(recent.length, 1);
   assert.equal(home.edges.length, 1);
   assert.equal(home.pageInfo.hasNextPage, false);
-  assert.deepEqual(cacheSets, ['fallback-post', 'fallback-post']);
+  assert.deepEqual(cacheSets, ['fallback-post']);
+});
+
+test('admin post queries and moderation actions require roles and update hidden status', async () => {
+  const invalidated: string[] = [];
+  const activePost = postRecord({ id: 'post-active', authorId: 'author-1' });
+  const hiddenPost = postRecord({
+    id: 'post-hidden',
+    authorId: 'author-2',
+    status: 'HIDDEN',
+    hiddenAt: new Date('2026-02-03T00:00:00.000Z'),
+    hiddenReason: 'ADMIN_HIDDEN'
+  });
+
+  const repository = createRepositoryStub({
+    async listAdminPosts(input) {
+      return input.status === 'HIDDEN' ? [hiddenPost] : [activePost];
+    },
+    async updateAdminPostStatus(input) {
+      if (input.postId === 'missing-post') {
+        return null;
+      }
+      return {
+        ...(input.status === 'HIDDEN' ? activePost : hiddenPost),
+        id: input.postId,
+        status: input.status,
+        hiddenAt: input.status === 'HIDDEN' ? new Date('2026-02-04T00:00:00.000Z') : null,
+        hiddenReason: input.hiddenReason ?? null
+      };
+    },
+    async countLikesForPost() {
+      return 2;
+    }
+  });
+
+  const feed = createFeedApplicationModule({
+    repository,
+    postCache: createCacheStub({
+      async invalidate(postId) {
+        invalidated.push(postId);
+      }
+    }),
+    mediaUrlSigner: { signMediaUrl: (key: string) => key },
+    eventPublisher: {
+      async publishPostCreated() {
+        return;
+      },
+      async publishPostLiked() {
+        return;
+      }
+    }
+  });
+
+  await assert.rejects(
+    () => feed.queries.adminPosts({ limit: 10 }, feed.helpers.toExecutionContext({ userId: 'viewer-1', roles: [] })),
+    /FORBIDDEN/
+  );
+
+  const adminCtx = feed.helpers.toExecutionContext({ userId: 'admin-1', roles: ['admin'] });
+  const hiddenOnly = await feed.queries.adminPosts({ status: 'HIDDEN', limit: 10 }, adminCtx);
+  assert.equal(hiddenOnly.edges[0]?.node.id, 'post-hidden');
+
+  const hidden = await feed.mutations.adminHidePost({ postId: 'post-active' }, adminCtx);
+  assert.equal(hidden.status, 'HIDDEN');
+  assert.equal(hidden.hiddenReason, 'ADMIN_HIDDEN');
+
+  const restored = await feed.mutations.adminRestorePost({ postId: 'post-hidden' }, adminCtx);
+  assert.equal(restored.status, 'ACTIVE');
+  assert.equal(restored.hiddenReason, null);
+  assert.deepEqual(invalidated, ['post-active', 'post-hidden']);
 });
 
 test('feedHome supplements sparse home rows with recent posts', async () => {

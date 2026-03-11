@@ -13,6 +13,7 @@ import type { RedisClientType } from '@redis/client';
 import type { KafkaConfig } from 'kafkajs';
 import {
   createFastifyLoggerOptions,
+  extractJwtRoles,
   getEnv,
   getRedisClient,
   loadEnv,
@@ -65,14 +66,17 @@ export async function buildServer(): Promise<FastifyInstance> {
     const token = parseAuthHeader(request.headers);
     if (!token) {
       request.userId = undefined;
+      request.roles = [];
       return;
     }
     try {
       const payload = await verifyJwt(token, { issuer, audience });
       request.userId = payload.sub;
+      request.roles = extractJwtRoles(payload);
     } catch (error) {
       request.log.debug({ err: error }, 'JWT verification failed');
       request.userId = undefined;
+      request.roles = [];
     }
   });
 
@@ -86,7 +90,7 @@ export async function buildServer(): Promise<FastifyInstance> {
     schema,
     graphiql: process.env.NODE_ENV !== 'production',
     federationMetadata: true,
-    context: (request): GraphQLContext => ({ userId: request.userId, redis })
+    context: (request): GraphQLContext => ({ userId: request.userId, roles: request.roles ?? [], redis })
   });
 
   app.addHook('onRequest', (request, _, done) => {
@@ -100,4 +104,3 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   return app;
 }
-

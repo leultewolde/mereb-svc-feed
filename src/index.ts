@@ -1,8 +1,15 @@
 import { buildServer } from './server.js';
-import { loadThenGetEnvs, buildKafkaConfigFromEnv, initDefaultTelemetry } from '@mereb/shared-packages';
+import {
+  loadThenGetEnvs,
+  buildKafkaConfigFromEnv,
+  getEnv,
+  getRedisClient,
+  initDefaultTelemetry
+} from '@mereb/shared-packages';
 import { runMigrations } from './migrate.js';
 import { createChildLogger } from './logger.js';
 import { startHomeFeedWorker } from './homeFeedWorker.js';
+import { startProfileModerationWorker } from './profileModerationWorker.js';
 
 const {PORT, HOST} = loadThenGetEnvs({
     envs: [
@@ -25,11 +32,19 @@ if (!kafkaConfig) {
 try {
     await runMigrations();
 
+    let workerRedis;
+    try {
+        workerRedis = await getRedisClient({ url: getEnv('REDIS_URL') });
+    } catch (err) {
+        logger.warn({err}, 'Failed to connect Redis for feed workers; cache invalidation will be best-effort');
+    }
+
     if (kafkaConfig) {
         try {
             await startHomeFeedWorker(kafkaConfig);
+            await startProfileModerationWorker(kafkaConfig, workerRedis);
         } catch (err) {
-            logger.error({err}, 'Failed to start home feed worker');
+            logger.error({err}, 'Failed to start feed workers');
         }
     }
 

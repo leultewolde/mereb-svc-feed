@@ -29,8 +29,42 @@ type Post @key(fields: "id") {
 
 type AdminContentMetrics {
   totalPosts: Int!
+  hiddenPosts: Int!
   postsLast24h: Int!
   totalLikes: Int!
+}
+
+enum AdminPostStatus {
+  ACTIVE
+  HIDDEN
+}
+
+enum AdminPostHiddenReason {
+  ADMIN_HIDDEN
+  USER_DEACTIVATED
+}
+
+type AdminPost {
+  id: ID!
+  author: User! @provides(fields: "id")
+  body: String!
+  media: [Media!]!
+  createdAt: String!
+  likeCount: Int!
+  likedByMe: Boolean!
+  status: AdminPostStatus!
+  hiddenAt: String
+  hiddenReason: AdminPostHiddenReason
+}
+
+type AdminPostEdge {
+  node: AdminPost!
+  cursor: String!
+}
+
+type AdminPostConnection {
+  edges: [AdminPostEdge!]!
+  pageInfo: PageInfo!
 }
 
 type Media {
@@ -59,13 +93,16 @@ type Query {
   feedHome(after: String, limit: Int = 20): PostConnection!
   post(id: ID!): Post
   adminContentMetrics: AdminContentMetrics!
-  adminRecentPosts(limit: Int = 10): [Post!]!
+  adminRecentPosts(limit: Int = 10): [AdminPost!]!
+  adminPosts(query: String, status: AdminPostStatus, after: String, limit: Int = 20): AdminPostConnection!
 }
 
 type Mutation {
   createPost(body: String!, mediaKeys: [String!], mediaAssetIds: [ID!]): Post!
   likePost(id: ID!): Boolean!
   unlikePost(id: ID!): Boolean!
+  adminHidePost(postId: ID!): AdminPost!
+  adminRestorePost(postId: ID!): AdminPost!
 }
 
 extend type Query {

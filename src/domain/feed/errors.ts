@@ -5,6 +5,20 @@ export class UnauthenticatedError extends Error {
   }
 }
 
+export class ForbiddenError extends Error {
+  constructor(message = 'FORBIDDEN') {
+    super(message);
+    this.name = 'ForbiddenError';
+  }
+}
+
+export class FeedPostNotFoundError extends Error {
+  constructor(message = 'POST_NOT_FOUND') {
+    super(message);
+    this.name = 'FeedPostNotFoundError';
+  }
+}
+
 export class InvalidMediaAssetError extends Error {
   constructor(message = 'INVALID_MEDIA_ASSET') {
     super(message);

@@ -1,19 +1,25 @@
 import type { GraphQLContext } from '../../context.js';
 import { decodeCursor, encodeCursor } from '../../utils/cursor.js';
 import {
+  FeedPostNotFoundError,
+  ForbiddenError,
   InvalidMediaAssetError,
   UnauthenticatedError
 } from '../../domain/feed/errors.js';
 import { postCreatedEvent, postLikedEvent } from '../../domain/feed/events.js';
 import {
-  buildStoredPostMediaPayload,
   normalizeCreatedAt,
+  type AdminPostStatus,
+  buildStoredPostMediaPayload,
   type FeedMediaRecord,
   type FeedMediaView
 } from '../../domain/feed/post.js';
 import type { FeedExecutionContext } from './context.js';
 import type {
   AdminContentMetrics,
+  AdminPostConnection,
+  AdminPostRecord,
+  AdminPostView,
   FeedEventPublisherPort,
   FeedMutationPorts,
   MediaAssetResolverPort,
@@ -25,12 +31,18 @@ import type {
   PostCachePort,
   PostConnection
 } from './ports.js';
+import { hasAdminReadAccess, hasFullAdminAccess } from '@mereb/shared-packages';
 
 const MAX_LIMIT = 50;
 const MIN_FEED_SIZE = 5;
 
 function toExecutionContext(ctx: GraphQLContext): FeedExecutionContext {
-  return ctx.userId ? { principal: { userId: ctx.userId } } : {};
+  return {
+    principal:
+      ctx.userId || (ctx.roles?.length ?? 0) > 0
+        ? { userId: ctx.userId, roles: ctx.roles ?? [] }
+        : undefined
+  };
 }
 
 function requireAuth(ctx: FeedExecutionContext): string {
@@ -39,6 +51,18 @@ function requireAuth(ctx: FeedExecutionContext): string {
     throw new UnauthenticatedError();
   }
   return userId;
+}
+
+function requireAdminReadAccess(ctx: FeedExecutionContext): void {
+  if (!hasAdminReadAccess(ctx.principal?.roles)) {
+    throw new ForbiddenError();
+  }
+}
+
+function requireFullAdminAccess(ctx: FeedExecutionContext): void {
+  if (!hasFullAdminAccess(ctx.principal?.roles)) {
+    throw new ForbiddenError();
+  }
 }
 
 function mapMedia(
@@ -127,6 +151,20 @@ async function enrichPost(
   };
 }
 
+async function enrichAdminPost(
+  deps: FeedDeps,
+  post: AdminPostRecord,
+  ctx: PostLikeViewerContext
+): Promise<AdminPostView> {
+  const base = await enrichPost(deps, post, ctx);
+  return {
+    ...base,
+    status: post.status,
+    hiddenAt: post.hiddenAt ? normalizeCreatedAt(post.hiddenAt) : null,
+    hiddenReason: post.hiddenReason
+  };
+}
+
 async function loadPostWithCache(deps: FeedDeps, postId: string): Promise<FeedPostRecord | null> {
   const cached = await deps.postCache.get(postId);
   if (cached) {
@@ -154,6 +192,28 @@ async function toPostConnection(
         node: await enrichPost(deps, post, ctx)
       };
     })
+  );
+
+  return {
+    edges,
+    pageInfo: {
+      endCursor: edges.at(-1)?.cursor ?? null,
+      hasNextPage: posts.length > limit
+    }
+  };
+}
+
+async function toAdminPostConnection(
+  deps: FeedDeps,
+  posts: AdminPostRecord[],
+  limit: number,
+  ctx: FeedExecutionContext
+): Promise<AdminPostConnection> {
+  const edges = await Promise.all(
+    posts.slice(0, limit).map(async (post) => ({
+      cursor: encodeCursor(post.createdAt, post.id),
+      node: await enrichAdminPost(deps, post, ctx)
+    }))
   );
 
   return {
@@ -210,17 +270,20 @@ export class FeedQueries {
     return this.deps.repository.isLikedByUser(postId, viewerId);
   }
 
-  async adminContentMetrics(): Promise<AdminContentMetrics> {
+  async adminContentMetrics(ctx: FeedExecutionContext): Promise<AdminContentMetrics> {
+    requireAdminReadAccess(ctx);
     const now = new Date();
     const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const [totalPosts, postsLast24h, totalLikes] = await Promise.all([
+    const [totalPosts, hiddenPosts, postsLast24h, totalLikes] = await Promise.all([
       this.deps.repository.countPosts(),
+      this.deps.repository.countPosts({ status: 'HIDDEN' }),
       this.deps.repository.countPostsCreatedSince(last24h),
       this.deps.repository.countLikes()
     ]);
 
     return {
       totalPosts,
+      hiddenPosts,
       postsLast24h,
       totalLikes
     };
@@ -229,11 +292,27 @@ export class FeedQueries {
   async adminRecentPosts(
     args: { limit?: number },
     ctx: FeedExecutionContext
-  ): Promise<FeedPostView[]> {
+  ): Promise<AdminPostView[]> {
+    requireAdminReadAccess(ctx);
     const limit = Math.min(Math.max(args.limit ?? 10, 1), 50);
-    const posts = await this.deps.repository.listRecentPosts({ take: limit });
-    await Promise.all(posts.map((post) => this.deps.postCache.set(post)));
-    return Promise.all(posts.map((post) => enrichPost(this.deps, post, ctx)));
+    const posts = await this.deps.repository.listAdminPosts({ take: limit });
+    return Promise.all(posts.map((post) => enrichAdminPost(this.deps, post, ctx)));
+  }
+
+  async adminPosts(
+    args: { query?: string; status?: AdminPostStatus; after?: string; limit?: number },
+    ctx: FeedExecutionContext
+  ): Promise<AdminPostConnection> {
+    requireAdminReadAccess(ctx);
+    const limit = Math.min(Math.max(args.limit ?? 20, 1), MAX_LIMIT);
+    const cursor = args.after ? decodeCursor(args.after) : undefined;
+    const posts = await this.deps.repository.listAdminPosts({
+      query: args.query?.trim() || undefined,
+      status: args.status,
+      cursor,
+      take: limit + 1
+    });
+    return toAdminPostConnection(this.deps, posts, limit, ctx);
   }
 
   async feedHome(
@@ -431,6 +510,34 @@ export class FeedMutations {
     });
     await this.deps.postCache.invalidate(input.id);
     return true;
+  }
+
+  async adminHidePost(input: { postId: string }, ctx: FeedExecutionContext): Promise<AdminPostView> {
+    requireFullAdminAccess(ctx);
+    const updated = await this.deps.repository.updateAdminPostStatus({
+      postId: input.postId,
+      status: 'HIDDEN',
+      hiddenReason: 'ADMIN_HIDDEN'
+    });
+    if (!updated) {
+      throw new FeedPostNotFoundError();
+    }
+    await this.deps.postCache.invalidate(input.postId);
+    return enrichAdminPost(this.deps, updated, ctx);
+  }
+
+  async adminRestorePost(input: { postId: string }, ctx: FeedExecutionContext): Promise<AdminPostView> {
+    requireFullAdminAccess(ctx);
+    const updated = await this.deps.repository.updateAdminPostStatus({
+      postId: input.postId,
+      status: 'ACTIVE',
+      hiddenReason: null
+    });
+    if (!updated) {
+      throw new FeedPostNotFoundError();
+    }
+    await this.deps.postCache.invalidate(input.postId);
+    return enrichAdminPost(this.deps, updated, ctx);
   }
 }
 

@@ -1,12 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import {
   OutboxEventStatus,
+  PostHiddenReason,
+  PostStatus,
   Prisma,
   type Post,
   type PrismaClient
 } from '../../../../generated/client/index.js';
 import { prisma } from '../../../prisma.js';
 import type {
+  AdminPostRecord,
   FeedEventPublisherPort,
   FeedMutationPorts,
   FeedPostRecord,
@@ -14,6 +17,7 @@ import type {
   FeedTransactionPort,
   HomeFeedRowRecord
 } from '../../../application/feed/ports.js';
+import type { AdminPostHiddenReason, AdminPostStatus } from '../../../domain/feed/post.js';
 
 type FeedPrismaDb = PrismaClient | Prisma.TransactionClient;
 
@@ -24,6 +28,9 @@ function toFeedPostRecord(post: Post): FeedPostRecord {
     body: post.body,
     media: post.media,
     visibility: post.visibility,
+    status: post.status,
+    hiddenAt: post.hiddenAt,
+    hiddenReason: post.hiddenReason,
     createdAt: post.createdAt
   };
 }
@@ -46,6 +53,16 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
   constructor(private readonly db: FeedPrismaDb = prisma) {}
 
   async findPostById(id: string): Promise<FeedPostRecord | null> {
+    const post = await this.db.post.findFirst({
+      where: {
+        id,
+        status: PostStatus.ACTIVE
+      }
+    });
+    return post ? toFeedPostRecord(post) : null;
+  }
+
+  async findAdminPostById(id: string): Promise<AdminPostRecord | null> {
     const post = await this.db.post.findUnique({ where: { id } });
     return post ? toFeedPostRecord(post) : null;
   }
@@ -58,6 +75,7 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
     const items = await this.db.post.findMany({
       where: {
         authorId: input.authorId,
+        status: PostStatus.ACTIVE,
         ...(input.cursor
           ? {
               OR: [
@@ -89,6 +107,7 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
     if (input.excludeAuthorId) {
       where.authorId = { not: input.excludeAuthorId };
     }
+    where.status = PostStatus.ACTIVE;
 
     const items = await this.db.post.findMany({
       where,
@@ -133,6 +152,44 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
     return rows.map(toHomeFeedRowRecord);
   }
 
+  async listAdminPosts(input: {
+    query?: string;
+    status?: AdminPostStatus;
+    cursor?: { createdAt: Date; id: string };
+    take: number;
+  }): Promise<AdminPostRecord[]> {
+    const normalizedQuery = input.query?.trim();
+    const items = await this.db.post.findMany({
+      where: {
+        ...(input.status ? { status: input.status } : {}),
+        ...(normalizedQuery
+          ? {
+              OR: [
+                { id: { contains: normalizedQuery, mode: 'insensitive' } },
+                { authorId: { contains: normalizedQuery, mode: 'insensitive' } },
+                { body: { contains: normalizedQuery, mode: 'insensitive' } }
+              ]
+            }
+          : {}),
+        ...(input.cursor
+          ? {
+              OR: [
+                { createdAt: { lt: input.cursor.createdAt } },
+                {
+                  createdAt: input.cursor.createdAt,
+                  id: { lt: input.cursor.id }
+                }
+              ]
+            }
+          : {})
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: input.take
+    });
+
+    return items.map(toFeedPostRecord);
+  }
+
   async createPost(input: {
     authorId: string;
     body: string;
@@ -165,16 +222,117 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
     });
   }
 
-  async countPosts(): Promise<number> {
-    return this.db.post.count();
-  }
-
-  async countPostsCreatedSince(since: Date): Promise<number> {
+  async countPosts(input?: { status?: AdminPostStatus }): Promise<number> {
     return this.db.post.count({
       where: {
+        ...(input?.status ? { status: input.status } : {})
+      }
+    });
+  }
+
+  async countPostsCreatedSince(since: Date, input?: { status?: AdminPostStatus }): Promise<number> {
+    return this.db.post.count({
+      where: {
+        ...(input?.status ? { status: input.status } : {}),
         createdAt: { gte: since }
       }
     });
+  }
+
+  async updateAdminPostStatus(input: {
+    postId: string;
+    status: AdminPostStatus;
+    hiddenReason?: AdminPostHiddenReason | null;
+  }): Promise<AdminPostRecord | null> {
+    try {
+      const post = await this.db.post.update({
+        where: { id: input.postId },
+        data: {
+          status: input.status,
+          hiddenAt: input.status === 'HIDDEN' ? new Date() : null,
+          hiddenReason:
+            input.status === 'HIDDEN'
+              ? (input.hiddenReason as PostHiddenReason | undefined) ?? PostHiddenReason.ADMIN_HIDDEN
+              : null
+        }
+      });
+      return toFeedPostRecord(post);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2025'
+      ) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async updateAdminPostsForAuthor(input: {
+    authorId: string;
+    status: AdminPostStatus;
+    hiddenReason: AdminPostHiddenReason;
+  }): Promise<string[]> {
+    const posts = await this.db.post.findMany({
+      where: {
+        authorId: input.authorId,
+        OR: [
+          { status: PostStatus.ACTIVE },
+          { hiddenReason: PostHiddenReason.USER_DEACTIVATED }
+        ]
+      },
+      select: { id: true }
+    });
+
+    if (posts.length === 0) {
+      return [];
+    }
+
+    await this.db.post.updateMany({
+      where: {
+        id: {
+          in: posts.map((post) => post.id)
+        }
+      },
+      data: {
+        status: input.status,
+        hiddenAt: input.status === 'HIDDEN' ? new Date() : null,
+        hiddenReason:
+          input.status === 'HIDDEN' ? (input.hiddenReason as PostHiddenReason) : null
+      }
+    });
+
+    return posts.map((post) => post.id);
+  }
+
+  async restoreAuthorPostsHiddenByDeactivation(authorId: string): Promise<string[]> {
+    const posts = await this.db.post.findMany({
+      where: {
+        authorId,
+        status: PostStatus.HIDDEN,
+        hiddenReason: PostHiddenReason.USER_DEACTIVATED
+      },
+      select: { id: true }
+    });
+
+    if (posts.length === 0) {
+      return [];
+    }
+
+    await this.db.post.updateMany({
+      where: {
+        id: {
+          in: posts.map((post) => post.id)
+        }
+      },
+      data: {
+        status: PostStatus.ACTIVE,
+        hiddenAt: null,
+        hiddenReason: null
+      }
+    });
+
+    return posts.map((post) => post.id);
   }
 
   async countLikes(): Promise<number> {

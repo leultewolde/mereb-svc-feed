@@ -1,4 +1,9 @@
-import type { FeedMediaView, StoredPostMediaPayload } from '../../domain/feed/post.js';
+import type {
+  AdminPostHiddenReason,
+  AdminPostStatus,
+  FeedMediaView,
+  StoredPostMediaPayload
+} from '../../domain/feed/post.js';
 
 export interface FeedCursor {
   createdAt: Date;
@@ -11,8 +16,13 @@ export interface FeedPostRecord {
   body: string;
   media: unknown;
   visibility: string;
+  status: AdminPostStatus;
+  hiddenAt: Date | null;
+  hiddenReason: AdminPostHiddenReason | null;
   createdAt: Date;
 }
+
+export type AdminPostRecord = FeedPostRecord;
 
 export interface HomeFeedRowRecord {
   ownerId: string;
@@ -34,6 +44,19 @@ export interface PostConnection {
   };
 }
 
+export interface AdminPostEdge {
+  node: AdminPostView;
+  cursor: string;
+}
+
+export interface AdminPostConnection {
+  edges: AdminPostEdge[];
+  pageInfo: {
+    endCursor: string | null;
+    hasNextPage: boolean;
+  };
+}
+
 export interface FeedPostView {
   id: string;
   authorId: string;
@@ -48,14 +71,22 @@ export interface FeedPostView {
   };
 }
 
+export interface AdminPostView extends FeedPostView {
+  status: AdminPostStatus;
+  hiddenAt: string | null;
+  hiddenReason: AdminPostHiddenReason | null;
+}
+
 export interface AdminContentMetrics {
   totalPosts: number;
+  hiddenPosts: number;
   postsLast24h: number;
   totalLikes: number;
 }
 
 export interface FeedRepositoryPort {
   findPostById(id: string): Promise<FeedPostRecord | null>;
+  findAdminPostById(id: string): Promise<AdminPostRecord | null>;
   listPostsByAuthor(input: {
     authorId: string;
     cursor?: FeedCursor;
@@ -71,6 +102,12 @@ export interface FeedRepositoryPort {
     cursor?: FeedCursor;
     take: number;
   }): Promise<HomeFeedRowRecord[]>;
+  listAdminPosts(input: {
+    query?: string;
+    status?: AdminPostStatus;
+    cursor?: FeedCursor;
+    take: number;
+  }): Promise<AdminPostRecord[]>;
   createPost(input: {
     authorId: string;
     body: string;
@@ -80,8 +117,19 @@ export interface FeedRepositoryPort {
     ownerId: string;
     postId: string;
   }): Promise<void>;
-  countPosts(): Promise<number>;
-  countPostsCreatedSince(since: Date): Promise<number>;
+  countPosts(input?: { status?: AdminPostStatus }): Promise<number>;
+  countPostsCreatedSince(since: Date, input?: { status?: AdminPostStatus }): Promise<number>;
+  updateAdminPostStatus(input: {
+    postId: string;
+    status: AdminPostStatus;
+    hiddenReason?: AdminPostHiddenReason | null;
+  }): Promise<AdminPostRecord | null>;
+  updateAdminPostsForAuthor(input: {
+    authorId: string;
+    status: AdminPostStatus;
+    hiddenReason: AdminPostHiddenReason;
+  }): Promise<string[]>;
+  restoreAuthorPostsHiddenByDeactivation(authorId: string): Promise<string[]>;
   countLikes(): Promise<number>;
   countLikesForPost(postId: string): Promise<number>;
   isLikedByUser(postId: string, userId: string): Promise<boolean>;
