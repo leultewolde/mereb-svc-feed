@@ -1,6 +1,7 @@
 import type { GraphQLContext } from '../../context.js';
 import { decodeCursor, encodeCursor } from '../../utils/cursor.js';
 import {
+  FeedCommentNotFoundError,
   FeedPostNotFoundError,
   ForbiddenError,
   InvalidMediaAssetError,
@@ -20,13 +21,17 @@ import type {
   AdminPostConnection,
   AdminPostRecord,
   AdminPostView,
+  CommentConnection,
+  FeedCommentRecord,
+  FeedCommentView,
   FeedEventPublisherPort,
   FeedMutationPorts,
-  MediaAssetResolverPort,
   FeedPostRecord,
+  FeedPostReferenceView,
   FeedPostView,
   FeedRepositoryPort,
   FeedTransactionPort,
+  MediaAssetResolverPort,
   MediaUrlSignerPort,
   PostCachePort,
   PostConnection
@@ -124,16 +129,31 @@ async function runInMutationTransaction<T>(
   return deps.transactionRunner.run(callback);
 }
 
-async function enrichPost(
+async function loadPostWithCache(deps: FeedDeps, postId: string): Promise<FeedPostRecord | null> {
+  const cached = await deps.postCache.get(postId);
+  if (cached) {
+    return cached;
+  }
+  const post = await deps.repository.findPostById(postId);
+  if (!post) {
+    return null;
+  }
+  await deps.postCache.set(post);
+  return post;
+}
+
+async function enrichPostReference(
   deps: FeedDeps,
   post: FeedPostRecord,
   ctx: PostLikeViewerContext
-): Promise<FeedPostView> {
-  const [likeCount, likedByMe] = await Promise.all([
+): Promise<FeedPostReferenceView> {
+  const [likeCount, likedByMe, commentCount, repostCount] = await Promise.all([
     deps.repository.countLikesForPost(post.id),
     ctx.principal?.userId
       ? deps.repository.isLikedByUser(post.id, ctx.principal.userId)
-      : Promise.resolve(false)
+      : Promise.resolve(false),
+    deps.repository.countCommentsForPost(post.id),
+    deps.repository.countRepostsForPost(post.id)
   ]);
 
   return {
@@ -144,10 +164,28 @@ async function enrichPost(
     visibility: post.visibility,
     likeCount,
     likedByMe,
+    commentCount,
+    repostCount,
     media: mapMedia(post.media, deps.mediaUrlSigner),
     author: {
       id: post.authorId
     }
+  };
+}
+
+async function enrichPost(
+  deps: FeedDeps,
+  post: FeedPostRecord,
+  ctx: PostLikeViewerContext
+): Promise<FeedPostView> {
+  const [base, repostOfPost] = await Promise.all([
+    enrichPostReference(deps, post, ctx),
+    post.repostOfId ? loadPostWithCache(deps, post.repostOfId) : Promise.resolve(null)
+  ]);
+
+  return {
+    ...base,
+    repostOf: repostOfPost ? await enrichPostReference(deps, repostOfPost, ctx) : null
   };
 }
 
@@ -165,17 +203,16 @@ async function enrichAdminPost(
   };
 }
 
-async function loadPostWithCache(deps: FeedDeps, postId: string): Promise<FeedPostRecord | null> {
-  const cached = await deps.postCache.get(postId);
-  if (cached) {
-    return cached;
-  }
-  const post = await deps.repository.findPostById(postId);
-  if (!post) {
-    return null;
-  }
-  await deps.postCache.set(post);
-  return post;
+function toCommentView(comment: FeedCommentRecord): FeedCommentView {
+  return {
+    id: comment.id,
+    postId: comment.postId,
+    body: comment.body,
+    createdAt: normalizeCreatedAt(comment.createdAt),
+    author: {
+      id: comment.authorId
+    }
+  };
 }
 
 async function toPostConnection(
@@ -259,10 +296,7 @@ export class FeedQueries {
     return toPostConnection(this.deps, posts, limit, ctx);
   }
 
-  async userLikedPost(
-    postId: string,
-    ctx: FeedExecutionContext
-  ): Promise<boolean> {
+  async userLikedPost(postId: string, ctx: FeedExecutionContext): Promise<boolean> {
     const viewerId = ctx.principal?.userId;
     if (!viewerId) {
       return false;
@@ -386,6 +420,56 @@ export class FeedQueries {
     return this.deps.repository.countLikesForPost(postId);
   }
 
+  async postCommentCount(postId: string): Promise<number> {
+    return this.deps.repository.countCommentsForPost(postId);
+  }
+
+  async postRepostCount(postId: string): Promise<number> {
+    return this.deps.repository.countRepostsForPost(postId);
+  }
+
+  async postRepostOf(
+    post: { repostOf?: FeedPostReferenceView | null; repostOfId?: string | null },
+    ctx: FeedExecutionContext
+  ): Promise<FeedPostReferenceView | null> {
+    if (post.repostOf !== undefined) {
+      return post.repostOf ?? null;
+    }
+    if (!post.repostOfId) {
+      return null;
+    }
+    const repostOf = await loadPostWithCache(this.deps, post.repostOfId);
+    if (!repostOf) {
+      return null;
+    }
+    return enrichPostReference(this.deps, repostOf, ctx);
+  }
+
+  async postComments(
+    postId: string,
+    args: { after?: string; limit?: number }
+  ): Promise<CommentConnection> {
+    const limit = Math.min(Math.max(args.limit ?? 20, 1), MAX_LIMIT);
+    const cursor = args.after ? decodeCursor(args.after) : undefined;
+    const comments = await this.deps.repository.listCommentsByPost({
+      postId,
+      cursor,
+      take: limit + 1
+    });
+    const edges = comments.slice(0, limit).map((comment) => ({
+      cursor: encodeCursor(comment.createdAt, comment.id),
+      node: toCommentView(comment)
+    }));
+
+    return {
+      edges,
+      pageInfo: {
+        endCursor: edges.at(-1)?.cursor ?? null,
+        hasNextPage: comments.length > limit
+      }
+    };
+  }
+
   async postLikedByViewer(postId: string, ctx: FeedExecutionContext): Promise<boolean> {
     const viewerId = ctx.principal?.userId;
     if (!viewerId) {
@@ -472,7 +556,10 @@ export class FeedMutations {
       createdAt: normalizeCreatedAt(post.createdAt),
       visibility: post.visibility,
       likeCount: 0,
-      likedByMe: true,
+      likedByMe: false,
+      commentCount: 0,
+      repostCount: 0,
+      repostOf: null,
       media: mapMedia(mediaPayload, this.deps.mediaUrlSigner),
       author: {
         id: post.authorId
@@ -510,6 +597,94 @@ export class FeedMutations {
     });
     await this.deps.postCache.invalidate(input.id);
     return true;
+  }
+
+  async createComment(
+    input: { postId: string; body: string },
+    ctx: FeedExecutionContext
+  ): Promise<FeedCommentView> {
+    const userId = requireAuth(ctx);
+    const trimmedBody = input.body.trim();
+    if (!trimmedBody) {
+      throw new Error('COMMENT_BODY_REQUIRED');
+    }
+
+    const post = await loadPostWithCache(this.deps, input.postId);
+    if (!post) {
+      throw new FeedPostNotFoundError();
+    }
+
+    const comment = await this.deps.repository.createComment({
+      postId: input.postId,
+      authorId: userId,
+      body: trimmedBody
+    });
+
+    return toCommentView(comment);
+  }
+
+  async deleteComment(input: { id: string }, ctx: FeedExecutionContext): Promise<boolean> {
+    const userId = requireAuth(ctx);
+    const comment = await this.deps.repository.findCommentById(input.id);
+    if (!comment) {
+      throw new FeedCommentNotFoundError();
+    }
+    if (comment.authorId !== userId) {
+      throw new ForbiddenError();
+    }
+    return this.deps.repository.deleteCommentIfAuthor({
+      id: input.id,
+      authorId: userId
+    });
+  }
+
+  async repostPost(
+    input: { id: string; body?: string | null },
+    ctx: FeedExecutionContext
+  ): Promise<FeedPostView> {
+    const userId = requireAuth(ctx);
+    const target = await loadPostWithCache(this.deps, input.id);
+    if (!target) {
+      throw new FeedPostNotFoundError();
+    }
+
+    const rootPostId = target.repostOfId ?? target.id;
+    const rootPost = rootPostId === target.id ? target : await loadPostWithCache(this.deps, rootPostId);
+    if (!rootPost) {
+      throw new FeedPostNotFoundError();
+    }
+
+    const repost = await runInMutationTransaction(this.deps, async (ports) => {
+      const created = await ports.repository.createPost({
+        authorId: userId,
+        body: input.body?.trim() ?? '',
+        media: [],
+        repostOfId: rootPost.id
+      });
+
+      await Promise.all([
+        ports.repository.upsertHomeFeedEntry({ ownerId: userId, postId: created.id }),
+        ports.repository.upsertHomeFeedEntry({ ownerId: 'anon', postId: created.id })
+      ]);
+
+      const event = postCreatedEvent({
+        postId: created.id,
+        authorId: created.authorId,
+        createdAt: created.createdAt,
+        visibility: created.visibility
+      });
+      await ports.eventPublisher.publishPostCreated({
+        postId: event.payload.postId,
+        authorId: event.payload.authorId,
+        createdAt: event.payload.createdAt,
+        visibility: event.payload.visibility
+      });
+
+      return created;
+    });
+
+    await this.deps.postCache.set(repost);
+    return enrichPost(this.deps, repost, ctx);
   }
 
   async adminHidePost(input: { postId: string }, ctx: FeedExecutionContext): Promise<AdminPostView> {

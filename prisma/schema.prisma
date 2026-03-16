@@ -15,16 +15,21 @@ model Post {
   body       String   @db.Text
   media      Json?
   visibility String   @default("public")
+  repostOfId String?
   status     PostStatus @default(ACTIVE)
   hiddenAt   DateTime?
   hiddenReason PostHiddenReason?
   createdAt  DateTime @default(now())
 
+  repostOf Post? @relation("PostReposts", fields: [repostOfId], references: [id], onDelete: SetNull)
+  reposts Post[] @relation("PostReposts")
   likes Like[]
+  comments Comment[]
 
   @@index([createdAt, id])
   @@index([status, createdAt, id])
   @@index([authorId, status, createdAt, id])
+  @@index([repostOfId, status, createdAt, id])
 }
 
 model Like {
@@ -36,6 +41,19 @@ model Like {
 
   @@id([userId, postId])
   @@index([postId, createdAt])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  postId    String
+  authorId  String   @db.VarChar(36)
+  body      String   @db.Text
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, createdAt, id])
+  @@index([authorId, createdAt, id])
 }
 
 model HomeFeed {

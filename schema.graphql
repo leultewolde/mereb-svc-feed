@@ -25,6 +25,40 @@ type Post @key(fields: "id") {
   createdAt: String!
   likeCount: Int!
   likedByMe: Boolean!
+  commentCount: Int!
+  repostCount: Int!
+  repostOf: PostReference
+  comments(after: String, limit: Int = 20): CommentConnection!
+}
+
+type PostReference {
+  id: ID!
+  author: User! @provides(fields: "id")
+  body: String!
+  media: [Media!]!
+  createdAt: String!
+  likeCount: Int!
+  likedByMe: Boolean!
+  commentCount: Int!
+  repostCount: Int!
+}
+
+type Comment {
+  id: ID!
+  postId: ID!
+  author: User! @provides(fields: "id")
+  body: String!
+  createdAt: String!
+}
+
+type CommentEdge {
+  node: Comment!
+  cursor: String!
+}
+
+type CommentConnection {
+  edges: [CommentEdge!]!
+  pageInfo: PageInfo!
 }
 
 type AdminContentMetrics {
@@ -52,6 +86,9 @@ type AdminPost {
   createdAt: String!
   likeCount: Int!
   likedByMe: Boolean!
+  commentCount: Int!
+  repostCount: Int!
+  repostOf: PostReference
   status: AdminPostStatus!
   hiddenAt: String
   hiddenReason: AdminPostHiddenReason
@@ -101,6 +138,9 @@ type Mutation {
   createPost(body: String!, mediaKeys: [String!], mediaAssetIds: [ID!]): Post!
   likePost(id: ID!): Boolean!
   unlikePost(id: ID!): Boolean!
+  createComment(postId: ID!, body: String!): Comment!
+  deleteComment(id: ID!): Boolean!
+  repostPost(id: ID!, body: String): Post!
   adminHidePost(postId: ID!): AdminPost!
   adminRestorePost(postId: ID!): AdminPost!
 }

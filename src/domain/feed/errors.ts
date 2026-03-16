@@ -25,3 +25,10 @@ export class InvalidMediaAssetError extends Error {
     this.name = 'InvalidMediaAssetError';
   }
 }
+
+export class FeedCommentNotFoundError extends Error {
+  constructor(message = 'COMMENT_NOT_FOUND') {
+    super(message);
+    this.name = 'FeedCommentNotFoundError';
+  }
+}

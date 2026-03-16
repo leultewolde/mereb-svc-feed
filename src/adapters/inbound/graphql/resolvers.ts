@@ -2,6 +2,7 @@ import type { IResolvers } from '@graphql-tools/utils';
 import { GraphQLScalarType, Kind, type ValueNode } from 'graphql';
 import type { GraphQLContext } from '../../../context.js';
 import {
+  FeedCommentNotFoundError,
   FeedPostNotFoundError,
   ForbiddenError,
   InvalidMediaAssetError,
@@ -53,6 +54,9 @@ function toGraphQLError(error: unknown): never {
   if (error instanceof FeedPostNotFoundError) {
     throw new Error(error.message);
   }
+  if (error instanceof FeedCommentNotFoundError) {
+    throw new Error(error.message);
+  }
   if (error instanceof InvalidMediaAssetError) {
     throw new Error(error.message);
   }
@@ -70,6 +74,51 @@ function hasResolvedMediaArray(value: unknown): value is { media: Array<{ type: 
 export function createResolvers(
   feed: FeedApplicationModule
 ): IResolvers<Record<string, unknown>, GraphQLContext> {
+  const resolvePostAuthor = (post: unknown) => {
+    if (post && typeof post === 'object' && 'author' in post) {
+      return (post as { author: { id: string } }).author;
+    }
+    return {
+      __typename: 'User',
+      id: (post as { authorId: string }).authorId
+    };
+  };
+
+  const resolvePostMedia = async (post: unknown) => {
+    if (hasResolvedMediaArray(post)) {
+      return post.media;
+    }
+    return feed.queries.postMedia(post as { media?: unknown });
+  };
+
+  const resolveLikeCount = (post: unknown) => {
+    if (post && typeof post === 'object' && typeof (post as { likeCount?: unknown }).likeCount === 'number') {
+      return (post as { likeCount: number }).likeCount;
+    }
+    return feed.queries.postLikeCount((post as { id: string }).id);
+  };
+
+  const resolveCommentCount = (post: unknown) => {
+    if (post && typeof post === 'object' && typeof (post as { commentCount?: unknown }).commentCount === 'number') {
+      return (post as { commentCount: number }).commentCount;
+    }
+    return feed.queries.postCommentCount((post as { id: string }).id);
+  };
+
+  const resolveRepostCount = (post: unknown) => {
+    if (post && typeof post === 'object' && typeof (post as { repostCount?: unknown }).repostCount === 'number') {
+      return (post as { repostCount: number }).repostCount;
+    }
+    return feed.queries.postRepostCount((post as { id: string }).id);
+  };
+
+  const resolveLikedByMe = (post: unknown, _args: unknown, ctx: GraphQLContext) => {
+    if (post && typeof post === 'object' && typeof (post as { likedByMe?: unknown }).likedByMe === 'boolean') {
+      return (post as { likedByMe: boolean }).likedByMe;
+    }
+    return feed.queries.postLikedByViewer((post as { id: string }).id, feed.helpers.toExecutionContext(ctx));
+  };
+
   return {
     _Any: AnyScalar,
     _Entity: {
@@ -102,39 +151,40 @@ export function createResolvers(
     Post: {
       __resolveReference: async (ref: unknown, _args: unknown, ctx: GraphQLContext) =>
         feed.queries.resolvePostReference(String((ref as { id: string }).id), feed.helpers.toExecutionContext(ctx)),
-      author: (post: unknown) => {
-        if (post && typeof post === 'object' && 'author' in post) {
-          return (post as { author: { id: string } }).author;
-        }
-        return {
-          __typename: 'User',
-          id: (post as { authorId: string }).authorId
-        };
-      },
-      media: async (post: unknown) => {
-        if (hasResolvedMediaArray(post)) {
-          return post.media;
-        }
-        return feed.queries.postMedia(post as { media?: unknown });
-      },
-      likeCount: (post: unknown) => {
-        if (post && typeof post === 'object' && typeof (post as { likeCount?: unknown }).likeCount === 'number') {
-          return (post as { likeCount: number }).likeCount;
-        }
-        return feed.queries.postLikeCount((post as { id: string }).id);
-      },
-      likedByMe: (post: unknown, _args: unknown, ctx: GraphQLContext) => {
-        if (post && typeof post === 'object' && typeof (post as { likedByMe?: unknown }).likedByMe === 'boolean') {
-          return (post as { likedByMe: boolean }).likedByMe;
-        }
-        return feed.queries.postLikedByViewer((post as { id: string }).id, feed.helpers.toExecutionContext(ctx));
-      }
+      author: resolvePostAuthor,
+      media: resolvePostMedia,
+      likeCount: resolveLikeCount,
+      likedByMe: resolveLikedByMe,
+      commentCount: resolveCommentCount,
+      repostCount: resolveRepostCount,
+      repostOf: (post: unknown, _args: unknown, ctx: GraphQLContext) =>
+        feed.queries.postRepostOf(post as { repostOfId?: string | null }, feed.helpers.toExecutionContext(ctx)),
+      comments: (post: unknown, args: { after?: string; limit?: number }) =>
+        feed.queries.postComments((post as { id: string }).id, args)
+    },
+    PostReference: {
+      author: resolvePostAuthor,
+      media: resolvePostMedia,
+      likeCount: resolveLikeCount,
+      likedByMe: resolveLikedByMe,
+      commentCount: resolveCommentCount,
+      repostCount: resolveRepostCount
+    },
+    Comment: {
+      author: (comment: unknown) => ({
+        __typename: 'User',
+        id: (comment as { author: { id: string } }).author?.id ?? (comment as { authorId?: string }).authorId
+      })
     },
     AdminPost: {
-      author: (post: unknown) => ({
-        __typename: 'User',
-        id: (post as { authorId: string }).authorId
-      })
+      author: resolvePostAuthor,
+      media: resolvePostMedia,
+      likeCount: resolveLikeCount,
+      likedByMe: resolveLikedByMe,
+      commentCount: resolveCommentCount,
+      repostCount: resolveRepostCount,
+      repostOf: (post: unknown, _args: unknown, ctx: GraphQLContext) =>
+        feed.queries.postRepostOf(post as { repostOfId?: string | null }, feed.helpers.toExecutionContext(ctx))
     },
     Query: {
       post: (_source: unknown, args: { id: string }, ctx) =>
@@ -209,6 +259,33 @@ export function createResolvers(
       unlikePost: async (_source: unknown, args: { id: string }, ctx) => {
         try {
           return await feed.mutations.unlikePost({ id: args.id }, feed.helpers.toExecutionContext(ctx));
+        } catch (error) {
+          toGraphQLError(error);
+        }
+      },
+      createComment: async (_source: unknown, args: { postId: string; body: string }, ctx) => {
+        try {
+          return await feed.mutations.createComment(
+            { postId: args.postId, body: args.body },
+            feed.helpers.toExecutionContext(ctx)
+          );
+        } catch (error) {
+          toGraphQLError(error);
+        }
+      },
+      deleteComment: async (_source: unknown, args: { id: string }, ctx) => {
+        try {
+          return await feed.mutations.deleteComment({ id: args.id }, feed.helpers.toExecutionContext(ctx));
+        } catch (error) {
+          toGraphQLError(error);
+        }
+      },
+      repostPost: async (_source: unknown, args: { id: string; body?: string | null }, ctx) => {
+        try {
+          return await feed.mutations.repostPost(
+            { id: args.id, body: args.body },
+            feed.helpers.toExecutionContext(ctx)
+          );
         } catch (error) {
           toGraphQLError(error);
         }

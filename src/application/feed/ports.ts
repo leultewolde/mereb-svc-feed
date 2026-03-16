@@ -16,6 +16,7 @@ export interface FeedPostRecord {
   body: string;
   media: unknown;
   visibility: string;
+  repostOfId: string | null;
   status: AdminPostStatus;
   hiddenAt: Date | null;
   hiddenReason: AdminPostHiddenReason | null;
@@ -23,6 +24,14 @@ export interface FeedPostRecord {
 }
 
 export type AdminPostRecord = FeedPostRecord;
+
+export interface FeedCommentRecord {
+  id: string;
+  postId: string;
+  authorId: string;
+  body: string;
+  createdAt: Date;
+}
 
 export interface HomeFeedRowRecord {
   ownerId: string;
@@ -65,6 +74,25 @@ export interface FeedPostView {
   visibility: string;
   likeCount: number;
   likedByMe: boolean;
+  commentCount: number;
+  repostCount: number;
+  repostOf: FeedPostReferenceView | null;
+  media: FeedMediaView[];
+  author: {
+    id: string;
+  };
+}
+
+export interface FeedPostReferenceView {
+  id: string;
+  authorId: string;
+  body: string;
+  createdAt: string;
+  visibility: string;
+  likeCount: number;
+  likedByMe: boolean;
+  commentCount: number;
+  repostCount: number;
   media: FeedMediaView[];
   author: {
     id: string;
@@ -75,6 +103,29 @@ export interface AdminPostView extends FeedPostView {
   status: AdminPostStatus;
   hiddenAt: string | null;
   hiddenReason: AdminPostHiddenReason | null;
+}
+
+export interface CommentEdge {
+  node: FeedCommentView;
+  cursor: string;
+}
+
+export interface CommentConnection {
+  edges: CommentEdge[];
+  pageInfo: {
+    endCursor: string | null;
+    hasNextPage: boolean;
+  };
+}
+
+export interface FeedCommentView {
+  id: string;
+  postId: string;
+  body: string;
+  createdAt: string;
+  author: {
+    id: string;
+  };
 }
 
 export interface AdminContentMetrics {
@@ -112,7 +163,20 @@ export interface FeedRepositoryPort {
     authorId: string;
     body: string;
     media: StoredPostMediaPayload[];
+    repostOfId?: string | null;
   }): Promise<FeedPostRecord>;
+  findCommentById(id: string): Promise<FeedCommentRecord | null>;
+  listCommentsByPost(input: {
+    postId: string;
+    cursor?: FeedCursor;
+    take: number;
+  }): Promise<FeedCommentRecord[]>;
+  createComment(input: {
+    postId: string;
+    authorId: string;
+    body: string;
+  }): Promise<FeedCommentRecord>;
+  deleteCommentIfAuthor(input: { id: string; authorId: string }): Promise<boolean>;
   upsertHomeFeedEntry(input: {
     ownerId: string;
     postId: string;
@@ -132,6 +196,8 @@ export interface FeedRepositoryPort {
   restoreAuthorPostsHiddenByDeactivation(authorId: string): Promise<string[]>;
   countLikes(): Promise<number>;
   countLikesForPost(postId: string): Promise<number>;
+  countCommentsForPost(postId: string): Promise<number>;
+  countRepostsForPost(postId: string): Promise<number>;
   isLikedByUser(postId: string, userId: string): Promise<boolean>;
   upsertLike(input: { postId: string; userId: string }): Promise<void>;
   deleteLikeIfExists(input: { postId: string; userId: string }): Promise<void>;

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  type Comment,
   OutboxEventStatus,
   PostHiddenReason,
   PostStatus,
@@ -10,6 +11,7 @@ import {
 import { prisma } from '../../../prisma.js';
 import type {
   AdminPostRecord,
+  FeedCommentRecord,
   FeedEventPublisherPort,
   FeedMutationPorts,
   FeedPostRecord,
@@ -28,10 +30,21 @@ function toFeedPostRecord(post: Post): FeedPostRecord {
     body: post.body,
     media: post.media,
     visibility: post.visibility,
+    repostOfId: post.repostOfId,
     status: post.status,
     hiddenAt: post.hiddenAt,
     hiddenReason: post.hiddenReason,
     createdAt: post.createdAt
+  };
+}
+
+function toFeedCommentRecord(comment: Comment): FeedCommentRecord {
+  return {
+    id: comment.id,
+    postId: comment.postId,
+    authorId: comment.authorId,
+    body: comment.body,
+    createdAt: comment.createdAt
   };
 }
 
@@ -194,15 +207,74 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
     authorId: string;
     body: string;
     media: Array<{ type: string; key: string }>;
+    repostOfId?: string | null;
   }): Promise<FeedPostRecord> {
     const post = await this.db.post.create({
       data: {
         authorId: input.authorId,
         body: input.body,
-        media: input.media
+        media: input.media,
+        repostOfId: input.repostOfId ?? null
       }
     });
     return toFeedPostRecord(post);
+  }
+
+  async findCommentById(id: string): Promise<FeedCommentRecord | null> {
+    const comment = await this.db.comment.findUnique({ where: { id } });
+    return comment ? toFeedCommentRecord(comment) : null;
+  }
+
+  async listCommentsByPost(input: {
+    postId: string;
+    cursor?: { createdAt: Date; id: string };
+    take: number;
+  }): Promise<FeedCommentRecord[]> {
+    const comments = await this.db.comment.findMany({
+      where: {
+        postId: input.postId,
+        ...(input.cursor
+          ? {
+              OR: [
+                { createdAt: { lt: input.cursor.createdAt } },
+                {
+                  createdAt: input.cursor.createdAt,
+                  id: { lt: input.cursor.id }
+                }
+              ]
+            }
+          : {})
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: input.take
+    });
+
+    return comments.map(toFeedCommentRecord);
+  }
+
+  async createComment(input: {
+    postId: string;
+    authorId: string;
+    body: string;
+  }): Promise<FeedCommentRecord> {
+    const comment = await this.db.comment.create({
+      data: {
+        postId: input.postId,
+        authorId: input.authorId,
+        body: input.body
+      }
+    });
+    return toFeedCommentRecord(comment);
+  }
+
+  async deleteCommentIfAuthor(input: { id: string; authorId: string }): Promise<boolean> {
+    const result = await this.db.comment.deleteMany({
+      where: {
+        id: input.id,
+        authorId: input.authorId
+      }
+    });
+    return result.count > 0;
   }
 
   async upsertHomeFeedEntry(input: { ownerId: string; postId: string }): Promise<void> {
@@ -341,6 +413,19 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
 
   async countLikesForPost(postId: string): Promise<number> {
     return this.db.like.count({ where: { postId } });
+  }
+
+  async countCommentsForPost(postId: string): Promise<number> {
+    return this.db.comment.count({ where: { postId } });
+  }
+
+  async countRepostsForPost(postId: string): Promise<number> {
+    return this.db.post.count({
+      where: {
+        repostOfId: postId,
+        status: PostStatus.ACTIVE
+      }
+    });
   }
 
   async isLikedByUser(postId: string, userId: string): Promise<boolean> {

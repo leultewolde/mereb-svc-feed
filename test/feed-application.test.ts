@@ -4,6 +4,7 @@ import {
   createFeedApplicationModule
 } from '../src/application/feed/use-cases.js';
 import type {
+  FeedCommentRecord,
   FeedEventPublisherPort,
   FeedPostRecord,
   FeedRepositoryPort,
@@ -74,6 +75,12 @@ function createRepositoryStub(overrides: Partial<FeedRepositoryPort> = {}): Feed
     async countLikesForPost() {
       return 0;
     },
+    async countCommentsForPost() {
+      return 0;
+    },
+    async countRepostsForPost() {
+      return 0;
+    },
     async isLikedByUser() {
       return false;
     },
@@ -82,6 +89,18 @@ function createRepositoryStub(overrides: Partial<FeedRepositoryPort> = {}): Feed
     },
     async deleteLikeIfExists() {
       return;
+    },
+    async findCommentById(): Promise<FeedCommentRecord | null> {
+      return null;
+    },
+    async listCommentsByPost() {
+      return [];
+    },
+    async createComment() {
+      throw new Error('not implemented');
+    },
+    async deleteCommentIfAuthor() {
+      return false;
     },
     ...overrides
   };
@@ -146,7 +165,7 @@ test('createPost seeds home feed/cache and emits post.created event', async () =
   );
 
   assert.equal(result.id, 'post-1');
-  assert.equal(result.likedByMe, true);
+  assert.equal(result.likedByMe, false);
   assert.deepEqual(result.media, [{ type: 'image', url: 'signed:x.jpg' }]);
   assert.deepEqual(upsertCalls, [
     { ownerId: 'user-1', postId: 'post-1' },
@@ -504,4 +523,161 @@ test('feedHome supplements sparse home rows with recent posts', async () => {
     home.edges.map((edge) => edge.node.id),
     ['post-1', 'post-2']
   );
+});
+
+test('comment and repost flows enrich engagement data and persist through repositories', async () => {
+  const rootPost = postRecord({
+    id: 'root-post',
+    authorId: 'author-1',
+    body: 'Original update',
+    createdAt: new Date('2026-02-03T00:00:00.000Z'),
+    repostOfId: null
+  });
+  const repostTarget = postRecord({
+    id: 'repost-target',
+    authorId: 'author-2',
+    body: 'Signal boost',
+    createdAt: new Date('2026-02-04T00:00:00.000Z'),
+    repostOfId: 'root-post'
+  });
+  const commentRecord: FeedCommentRecord = {
+    id: 'comment-1',
+    postId: 'root-post',
+    authorId: 'viewer-1',
+    body: 'Great post',
+    createdAt: new Date('2026-02-05T10:00:00.000Z')
+  };
+  const commentDeleteCalls: Array<{ id: string; authorId: string }> = [];
+  const repostCreateCalls: Array<{
+    authorId: string;
+    body: string;
+    media: unknown;
+    repostOfId?: string | null;
+  }> = [];
+  const homeFeedCalls: Array<{ ownerId: string; postId: string }> = [];
+  const cacheSets: string[] = [];
+  const publishedEvents: Array<unknown> = [];
+
+  const feed = createFeedApplicationModule({
+    repository: createRepositoryStub({
+      async findPostById(id) {
+        if (id === 'root-post') return rootPost;
+        if (id === 'repost-target') return repostTarget;
+        return null;
+      },
+      async countLikesForPost(postId) {
+        return postId === 'root-post' ? 5 : 0;
+      },
+      async countCommentsForPost(postId) {
+        return postId === 'root-post' ? 3 : 0;
+      },
+      async countRepostsForPost(postId) {
+        return postId === 'root-post' ? 4 : 0;
+      },
+      async listCommentsByPost(input) {
+        assert.equal(input.postId, 'root-post');
+        assert.equal(input.take, 3);
+        return [
+          commentRecord,
+          {
+            ...commentRecord,
+            id: 'comment-2',
+            body: 'Second note',
+            createdAt: new Date('2026-02-05T09:00:00.000Z')
+          },
+          {
+            ...commentRecord,
+            id: 'comment-3',
+            body: 'Third note',
+            createdAt: new Date('2026-02-05T08:00:00.000Z')
+          }
+        ];
+      },
+      async createComment(input) {
+        assert.deepEqual(input, {
+          postId: 'root-post',
+          authorId: 'viewer-1',
+          body: 'Great post'
+        });
+        return commentRecord;
+      },
+      async findCommentById(id) {
+        return id === 'comment-1' ? commentRecord : null;
+      },
+      async deleteCommentIfAuthor(input) {
+        commentDeleteCalls.push(input);
+        return true;
+      },
+      async createPost(input) {
+        repostCreateCalls.push(input);
+        return postRecord({
+          id: 'repost-created',
+          authorId: input.authorId,
+          body: input.body,
+          media: input.media,
+          createdAt: new Date('2026-02-06T00:00:00.000Z'),
+          repostOfId: input.repostOfId ?? null
+        });
+      },
+      async upsertHomeFeedEntry(input) {
+        homeFeedCalls.push(input);
+      }
+    }),
+    postCache: createCacheStub({
+      async set(post) {
+        cacheSets.push(post.id);
+      }
+    }),
+    mediaUrlSigner: {
+      signMediaUrl(key: string) {
+        return `signed:${key}`;
+      }
+    },
+    eventPublisher: {
+      async publishPostCreated(input) {
+        publishedEvents.push(input);
+      },
+      async publishPostLiked() {
+        return;
+      }
+    }
+  });
+
+  const ctx = feed.helpers.toExecutionContext({ userId: 'viewer-1' });
+  const commentCount = await feed.queries.postCommentCount('root-post');
+  const repostCount = await feed.queries.postRepostCount('root-post');
+  const repostOf = await feed.queries.postRepostOf({ repostOfId: 'root-post' }, ctx);
+  const comments = await feed.queries.postComments('root-post', { limit: 2 });
+  const createdComment = await feed.mutations.createComment({ postId: 'root-post', body: '  Great post  ' }, ctx);
+  const deletedComment = await feed.mutations.deleteComment({ id: 'comment-1' }, ctx);
+  const repost = await feed.mutations.repostPost({ id: 'repost-target', body: '  Read this  ' }, ctx);
+
+  assert.equal(commentCount, 3);
+  assert.equal(repostCount, 4);
+  assert.equal(repostOf?.id, 'root-post');
+  assert.equal(repostOf?.commentCount, 3);
+  assert.equal(repostOf?.repostCount, 4);
+  assert.equal(comments.edges.length, 2);
+  assert.equal(comments.pageInfo.hasNextPage, true);
+  assert.equal(createdComment.body, 'Great post');
+  assert.equal(createdComment.author.id, 'viewer-1');
+  assert.equal(deletedComment, true);
+  assert.deepEqual(commentDeleteCalls, [{ id: 'comment-1', authorId: 'viewer-1' }]);
+  assert.deepEqual(repostCreateCalls, [
+    {
+      authorId: 'viewer-1',
+      body: 'Read this',
+      media: [],
+      repostOfId: 'root-post'
+    }
+  ]);
+  assert.deepEqual(homeFeedCalls, [
+    { ownerId: 'viewer-1', postId: 'repost-created' },
+    { ownerId: 'anon', postId: 'repost-created' }
+  ]);
+  assert.deepEqual(cacheSets, ['root-post', 'root-post', 'repost-target', 'root-post', 'repost-created', 'root-post']);
+  assert.equal(publishedEvents.length, 1);
+  assert.equal(repost.repostOf?.id, 'root-post');
+  assert.equal(repost.commentCount, 0);
+  assert.equal(repost.repostCount, 0);
 });

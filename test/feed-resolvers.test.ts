@@ -1,7 +1,11 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { createResolvers } from '../src/adapters/inbound/graphql/resolvers.js';
-import { UnauthenticatedError } from '../src/domain/feed/errors.js';
+import {
+  FeedCommentNotFoundError,
+  ForbiddenError,
+  UnauthenticatedError
+} from '../src/domain/feed/errors.js';
 import type { FeedApplicationModule } from '../src/application/feed/use-cases.js';
 
 function createFeedModuleStub(): FeedApplicationModule {
@@ -16,13 +20,22 @@ function createFeedModuleStub(): FeedApplicationModule {
       async adminRecentPosts() { return []; },
       async feedHome() { return { edges: [], pageInfo: { endCursor: null, hasNextPage: false } }; },
       async postLikeCount() { return 0; },
+      async postCommentCount() { return 0; },
+      async postRepostCount() { return 0; },
+      async postRepostOf() { return null; },
+      async postComments() { return { edges: [], pageInfo: { endCursor: null, hasNextPage: false } }; },
       async postLikedByViewer() { return false; },
       async postMedia() { return []; }
     },
     mutations: {
       async createPost() { throw new UnauthenticatedError(); },
       async likePost() { return true; },
-      async unlikePost() { return true; }
+      async unlikePost() { return true; },
+      async createComment() { return { id: 'comment-1', postId: 'post-1', body: 'hello', createdAt: '2026-02-01T00:00:00.000Z', author: { id: 'user-1' } }; },
+      async deleteComment() { return true; },
+      async repostPost() { return { id: 'post-99', authorId: 'user-1', body: 'boost', createdAt: '2026-02-01T00:00:00.000Z', visibility: 'public', likeCount: 0, likedByMe: false, commentCount: 0, repostCount: 0, repostOf: null, media: [], author: { id: 'user-1' } }; },
+      async adminHidePost() { throw new Error('not used'); },
+      async adminRestorePost() { throw new Error('not used'); }
     },
     helpers: {
       toExecutionContext(ctx: { userId?: string }) {
@@ -185,6 +198,184 @@ test('post and user field resolvers reuse resolved values before delegating', as
     {
       kind: 'postLikedByViewer',
       payload: { postId: 'post-2', ctx: { principal: { userId: 'viewer-1' } } }
+    }
+  ]);
+});
+
+test('engagement field resolvers and comment/repost mutations delegate through the feed module', async () => {
+  const calls: Array<{ kind: string; payload: unknown }> = [];
+  const feed = createFeedModuleStub();
+  feed.queries.postCommentCount = async (postId) => {
+    calls.push({ kind: 'postCommentCount', payload: postId });
+    return 6;
+  };
+  feed.queries.postRepostCount = async (postId) => {
+    calls.push({ kind: 'postRepostCount', payload: postId });
+    return 4;
+  };
+  feed.queries.postRepostOf = async (post, ctx) => {
+    calls.push({ kind: 'postRepostOf', payload: { post, ctx } });
+    return {
+      id: 'post-root',
+      authorId: 'user-7',
+      body: 'root',
+      createdAt: '2026-02-01T00:00:00.000Z',
+      visibility: 'public',
+      likeCount: 2,
+      likedByMe: false,
+      commentCount: 1,
+      repostCount: 5,
+      media: [],
+      author: { id: 'user-7' }
+    };
+  };
+  feed.queries.postComments = async (postId, args) => {
+    calls.push({ kind: 'postComments', payload: { postId, args } });
+    return {
+      edges: [
+        {
+          cursor: 'cursor-1',
+          node: {
+            id: 'comment-1',
+            postId,
+            body: 'hello',
+            createdAt: '2026-02-01T00:00:00.000Z',
+            author: { id: 'user-8' }
+          }
+        }
+      ],
+      pageInfo: { endCursor: 'cursor-1', hasNextPage: false }
+    };
+  };
+  feed.mutations.createComment = async (input, ctx) => {
+    calls.push({ kind: 'createComment', payload: { input, ctx } });
+    return {
+      id: 'comment-2',
+      postId: input.postId,
+      body: input.body,
+      createdAt: '2026-02-02T00:00:00.000Z',
+      author: { id: 'viewer-1' }
+    };
+  };
+  feed.mutations.deleteComment = async (input, ctx) => {
+    calls.push({ kind: 'deleteComment', payload: { input, ctx } });
+    throw new FeedCommentNotFoundError();
+  };
+  feed.mutations.repostPost = async (input, ctx) => {
+    calls.push({ kind: 'repostPost', payload: { input, ctx } });
+    throw new ForbiddenError();
+  };
+
+  const resolvers = createResolvers(feed);
+  const post = resolvers.Post as Record<string, (...args: unknown[]) => Promise<unknown> | unknown>;
+  const postReference = resolvers.PostReference as Record<string, (...args: unknown[]) => Promise<unknown> | unknown>;
+  const adminPost = resolvers.AdminPost as Record<string, (...args: unknown[]) => Promise<unknown> | unknown>;
+  const comment = resolvers.Comment as Record<string, (...args: unknown[]) => unknown>;
+  const mutation = resolvers.Mutation as Record<string, (...args: unknown[]) => Promise<unknown>>;
+
+  assert.equal(await post.commentCount({ id: 'post-1' }), 6);
+  assert.equal(await post.repostCount({ id: 'post-1' }), 4);
+  assert.deepEqual(
+    await post.repostOf({ repostOfId: 'post-root' }, {}, { userId: 'viewer-1' }),
+    {
+      id: 'post-root',
+      authorId: 'user-7',
+      body: 'root',
+      createdAt: '2026-02-01T00:00:00.000Z',
+      visibility: 'public',
+      likeCount: 2,
+      likedByMe: false,
+      commentCount: 1,
+      repostCount: 5,
+      media: [],
+      author: { id: 'user-7' }
+    }
+  );
+  assert.deepEqual(
+    await post.comments({ id: 'post-1' }, { after: 'cursor-0', limit: 5 }),
+    {
+      edges: [
+        {
+          cursor: 'cursor-1',
+          node: {
+            id: 'comment-1',
+            postId: 'post-1',
+            body: 'hello',
+            createdAt: '2026-02-01T00:00:00.000Z',
+            author: { id: 'user-8' }
+          }
+        }
+      ],
+      pageInfo: { endCursor: 'cursor-1', hasNextPage: false }
+    }
+  );
+  assert.equal(await postReference.commentCount({ id: 'post-2' }), 6);
+  assert.equal(await postReference.repostCount({ id: 'post-2' }), 4);
+  assert.deepEqual(await adminPost.repostOf({ repostOfId: 'post-root' }, {}, { userId: 'viewer-1' }), {
+    id: 'post-root',
+    authorId: 'user-7',
+    body: 'root',
+    createdAt: '2026-02-01T00:00:00.000Z',
+    visibility: 'public',
+    likeCount: 2,
+    likedByMe: false,
+    commentCount: 1,
+    repostCount: 5,
+    media: [],
+    author: { id: 'user-7' }
+  });
+  assert.deepEqual(comment.author({ author: { id: 'user-8' } }), { __typename: 'User', id: 'user-8' });
+
+  assert.deepEqual(
+    await mutation.createComment({}, { postId: 'post-1', body: 'nice' }, { userId: 'viewer-1' }),
+    {
+      id: 'comment-2',
+      postId: 'post-1',
+      body: 'nice',
+      createdAt: '2026-02-02T00:00:00.000Z',
+      author: { id: 'viewer-1' }
+    }
+  );
+  await assert.rejects(
+    () => mutation.deleteComment({}, { id: 'comment-9' }, { userId: 'viewer-1' }),
+    (error: unknown) => error instanceof Error && error.message === 'COMMENT_NOT_FOUND'
+  );
+  await assert.rejects(
+    () => mutation.repostPost({}, { id: 'post-9', body: 'boost' }, { userId: 'viewer-1' }),
+    (error: unknown) => error instanceof Error && error.message === 'FORBIDDEN'
+  );
+
+  assert.deepEqual(calls, [
+    { kind: 'postCommentCount', payload: 'post-1' },
+    { kind: 'postRepostCount', payload: 'post-1' },
+    {
+      kind: 'postRepostOf',
+      payload: { post: { repostOfId: 'post-root' }, ctx: { principal: { userId: 'viewer-1' } } }
+    },
+    {
+      kind: 'postComments',
+      payload: { postId: 'post-1', args: { after: 'cursor-0', limit: 5 } }
+    },
+    { kind: 'postCommentCount', payload: 'post-2' },
+    { kind: 'postRepostCount', payload: 'post-2' },
+    {
+      kind: 'postRepostOf',
+      payload: { post: { repostOfId: 'post-root' }, ctx: { principal: { userId: 'viewer-1' } } }
+    },
+    {
+      kind: 'createComment',
+      payload: {
+        input: { postId: 'post-1', body: 'nice' },
+        ctx: { principal: { userId: 'viewer-1' } }
+      }
+    },
+    {
+      kind: 'deleteComment',
+      payload: { input: { id: 'comment-9' }, ctx: { principal: { userId: 'viewer-1' } } }
+    },
+    {
+      kind: 'repostPost',
+      payload: { input: { id: 'post-9', body: 'boost' }, ctx: { principal: { userId: 'viewer-1' } } }
     }
   ]);
 });
