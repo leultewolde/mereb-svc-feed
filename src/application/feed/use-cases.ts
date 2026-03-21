@@ -1,5 +1,6 @@
 import type { GraphQLContext } from '../../context.js';
 import { decodeCursor, encodeCursor } from '../../utils/cursor.js';
+import { decodeHomeFeedCursor, encodeHomeFeedCursor } from '../../utils/home-feed-cursor.js';
 import {
   FeedCommentNotFoundError,
   FeedPostNotFoundError,
@@ -34,12 +35,19 @@ import type {
   MediaAssetResolverPort,
   MediaUrlSignerPort,
   PostCachePort,
+  PostEngagementStatsRecord,
   PostConnection
 } from './ports.js';
 import { hasAdminReadAccess, hasFullAdminAccess } from '@mereb/shared-packages';
+import {
+  compareHomeFeedRank,
+  computeHomeFeedRank
+} from './home-feed-ranking.js';
 
 const MAX_LIMIT = 50;
 const MIN_FEED_SIZE = 5;
+const HOME_FEED_CANDIDATE_MULTIPLIER = 3;
+const HOME_FEED_CANDIDATE_MIN = 40;
 
 function toExecutionContext(ctx: GraphQLContext): FeedExecutionContext {
   return {
@@ -108,6 +116,7 @@ interface FeedDeps {
   mediaAssetResolver?: MediaAssetResolverPort;
   eventPublisher: FeedEventPublisherPort;
   transactionRunner?: FeedTransactionPort;
+  now?: () => Date;
 }
 
 type PostLikeViewerContext = Pick<FeedExecutionContext, 'principal'>;
@@ -240,6 +249,144 @@ async function toPostConnection(
   };
 }
 
+async function toHomeFallbackPostConnection(
+  deps: FeedDeps,
+  posts: FeedPostRecord[],
+  limit: number,
+  ctx: FeedExecutionContext
+): Promise<PostConnection> {
+  const edges = await Promise.all(
+    posts.slice(0, limit).map(async (post) => {
+      await deps.postCache.set(post);
+      return {
+        cursor: encodeHomeFeedCursor({
+          mode: 'fallback',
+          createdAt: post.createdAt,
+          postId: post.id
+        }),
+        node: await enrichPost(deps, post, ctx)
+      };
+    })
+  );
+
+  return {
+    edges,
+    pageInfo: {
+      endCursor: edges.at(-1)?.cursor ?? null,
+      hasNextPage: posts.length > limit
+    }
+  };
+}
+
+interface RankedHomeFeedCandidate {
+  row: {
+    ownerId: string;
+    postId: string;
+    rank: bigint;
+    insertedAt: Date;
+  };
+  post: FeedPostRecord;
+  rank: bigint;
+}
+
+function getHomeFeedCandidateWindow(limit: number): number {
+  return Math.max(limit * HOME_FEED_CANDIDATE_MULTIPLIER, HOME_FEED_CANDIDATE_MIN);
+}
+
+function getHomeFeedSupplementCount(limit: number, visibleCount: number): number {
+  const targetSize = Math.min(limit, MIN_FEED_SIZE);
+  return Math.min(3, Math.max(0, targetSize - visibleCount));
+}
+
+async function rankHomeFeedCandidates(
+  deps: FeedDeps,
+  rows: Array<{
+    ownerId: string;
+    postId: string;
+    rank: bigint;
+    insertedAt: Date;
+  }>,
+  ctx: FeedExecutionContext
+): Promise<RankedHomeFeedCandidate[]> {
+  const hydratedRows = await Promise.all(
+    rows.map(async (row) => {
+      const post = await loadPostWithCache(deps, row.postId);
+      if (!post) {
+        return null;
+      }
+      return { row, post };
+    })
+  );
+
+  const presentRows = hydratedRows.filter(Boolean) as Array<{
+    row: RankedHomeFeedCandidate['row'];
+    post: FeedPostRecord;
+  }>;
+
+  if (presentRows.length === 0) {
+    return [];
+  }
+
+  const statsByPostId = new Map<string, PostEngagementStatsRecord>(
+    (
+      await deps.repository.listPostEngagementStats(
+        presentRows.map((entry) => entry.post.id)
+      )
+    ).map((entry) => [entry.postId, entry])
+  );
+
+  const now = deps.now?.() ?? new Date();
+  const ranked = presentRows.map(({ row, post }) => {
+    const stats = statsByPostId.get(post.id) ?? {
+      postId: post.id,
+      likeCount: 0,
+      commentCount: 0,
+      repostCount: 0
+    };
+
+    return {
+      row,
+      post,
+      rank: computeHomeFeedRank({
+        createdAt: post.createdAt,
+        likeCount: stats.likeCount,
+        commentCount: stats.commentCount,
+        repostCount: stats.repostCount,
+        now
+      })
+    };
+  });
+
+  const changedRanks = ranked
+    .filter((entry) => entry.row.rank !== entry.rank)
+    .map((entry) => ({
+      postId: entry.row.postId,
+      rank: entry.rank
+    }));
+
+  if (changedRanks.length > 0) {
+    await deps.repository.updateHomeFeedRanks({
+      ownerId: ctx.principal?.userId ?? 'anon',
+      entries: changedRanks
+    });
+  }
+
+  return ranked.sort((left, right) =>
+    compareHomeFeedRank(
+      {
+        rank: left.rank,
+        insertedAt: left.row.insertedAt,
+        postId: left.row.postId
+      },
+      {
+        rank: right.rank,
+        insertedAt: right.row.insertedAt,
+        postId: right.row.postId
+      }
+    )
+  );
+}
+
 async function toAdminPostConnection(
   deps: FeedDeps,
   posts: AdminPostRecord[],
@@ -354,64 +501,116 @@ export class FeedQueries {
     ctx: FeedExecutionContext
   ): Promise<PostConnection> {
     const limit = Math.min(args.limit ?? 20, MAX_LIMIT);
-    const cursor = args.after ? decodeCursor(args.after) : undefined;
+    const decodedCursor = args.after ? decodeHomeFeedCursor(args.after) : null;
     const ownerId = ctx.principal?.userId ?? 'anon';
+    const isFirstPage = decodedCursor == null;
+
+    if (decodedCursor?.mode === 'fallback') {
+      const fallback = await this.deps.repository.listRecentPosts({
+        cursor: {
+          createdAt: decodedCursor.createdAt,
+          id: decodedCursor.postId
+        },
+        take: limit + 1
+      });
+      return toHomeFallbackPostConnection(this.deps, fallback, limit, ctx);
+    }
+
+    const candidateWindow = getHomeFeedCandidateWindow(limit);
 
     const rows = await this.deps.repository.listHomeFeed({
       ownerId,
-      cursor,
-      take: limit + 1
+      cursor:
+        decodedCursor?.mode === 'home'
+          ? {
+              rank: decodedCursor.rank,
+              insertedAt: decodedCursor.insertedAt,
+              postId: decodedCursor.postId
+            }
+          : undefined,
+      take: candidateWindow + 1
     });
 
     if (rows.length === 0) {
+      if (!isFirstPage) {
+        return {
+          edges: [],
+          pageInfo: {
+            endCursor: null,
+            hasNextPage: false
+          }
+        };
+      }
+
       const fallback = await this.deps.repository.listRecentPosts({ take: limit + 1 });
-      return toPostConnection(this.deps, fallback, limit, ctx);
+      return toHomeFallbackPostConnection(this.deps, fallback, limit, ctx);
     }
 
-    const rowEdges = await Promise.all(
-      rows.slice(0, limit).map(async (row) => {
-        const post = await loadPostWithCache(this.deps, row.postId);
-        if (!post) {
-          return null;
-        }
-
-        return {
-          cursor: encodeCursor(row.insertedAt, row.postId),
-          node: await enrichPost(this.deps, post, ctx)
-        };
-      })
+    const rankedRows = await rankHomeFeedCandidates(
+      this.deps,
+      rows.slice(0, candidateWindow),
+      ctx
     );
 
-    const filteredEdges = rowEdges.filter(Boolean) as PostConnection['edges'];
-    const uniqueAuthors = new Set(filteredEdges.map((edge) => edge.node.author.id));
-    const needsSupplement =
-      filteredEdges.length < MIN_FEED_SIZE || uniqueAuthors.size <= 1;
+    if (rankedRows.length === 0) {
+      if (!isFirstPage) {
+        return {
+          edges: [],
+          pageInfo: {
+            endCursor: null,
+            hasNextPage: false
+          }
+        };
+      }
 
-    let supplementedEdges = filteredEdges;
-    if (needsSupplement) {
-      const existingIds = filteredEdges.map((edge) => edge.node.id);
-      const supplementCount = MIN_FEED_SIZE - filteredEdges.length + 3;
-      const extras = await this.deps.repository.listRecentPosts({
-        take: supplementCount,
-        excludeIds: existingIds,
-        excludeAuthorId: ctx.principal?.userId
-      });
+      const fallback = await this.deps.repository.listRecentPosts({ take: limit + 1 });
+      return toHomeFallbackPostConnection(this.deps, fallback, limit, ctx);
+    }
 
-      const extraEdges = await Promise.all(
-        extras.map(async (post) => ({
-          cursor: encodeCursor(post.createdAt, post.id),
-          node: await enrichPost(this.deps, post, ctx)
-        }))
-      );
+    const visibleHomeRows = rankedRows.slice(0, limit);
+    const homeEdges = await Promise.all(
+      visibleHomeRows.map(async (entry) => ({
+        cursor: encodeHomeFeedCursor({
+          mode: 'home',
+          rank: entry.rank,
+          insertedAt: entry.row.insertedAt,
+          postId: entry.row.postId
+        }),
+        node: await enrichPost(this.deps, entry.post, ctx)
+      }))
+    );
 
-      supplementedEdges = [...filteredEdges, ...extraEdges];
+    let edges = homeEdges;
+    if (isFirstPage) {
+      const supplementCount = getHomeFeedSupplementCount(limit, homeEdges.length);
+      if (supplementCount > 0) {
+        const existingIds = homeEdges.map((edge) => edge.node.id);
+        const extras = await this.deps.repository.listRecentPosts({
+          take: supplementCount,
+          excludeIds: existingIds,
+          excludeAuthorId: ctx.principal?.userId
+        });
+
+        const extraEdges = await Promise.all(
+          extras.map(async (post) => ({
+            cursor: encodeHomeFeedCursor({
+              mode: 'fallback',
+              createdAt: post.createdAt,
+              postId: post.id
+            }),
+            node: await enrichPost(this.deps, post, ctx)
+          }))
+        );
+
+        edges = [...homeEdges, ...extraEdges];
+      }
     }
 
     return {
-      edges: supplementedEdges,
+      edges,
       pageInfo: {
-        endCursor: supplementedEdges.at(-1)?.cursor ?? null,
-        hasNextPage: rows.length > limit
+        endCursor: homeEdges.at(-1)?.cursor ?? null,
+        hasNextPage: rows.length > candidateWindow || rankedRows.length > limit
       }
     };
   }
@@ -527,8 +726,16 @@ export class FeedMutations {
       });
 
       await Promise.all([
-        ports.repository.upsertHomeFeedEntry({ ownerId: userId, postId: created.id }),
-        ports.repository.upsertHomeFeedEntry({ ownerId: 'anon', postId: created.id })
+        ports.repository.upsertHomeFeedEntry({
+          ownerId: userId,
+          postId: created.id,
+          insertedAt: created.createdAt
+        }),
+        ports.repository.upsertHomeFeedEntry({
+          ownerId: 'anon',
+          postId: created.id,
+          insertedAt: created.createdAt
+        })
       ]);
 
       const event = postCreatedEvent({
@@ -663,8 +870,16 @@ export class FeedMutations {
       });
 
       await Promise.all([
-        ports.repository.upsertHomeFeedEntry({ ownerId: userId, postId: created.id }),
-        ports.repository.upsertHomeFeedEntry({ ownerId: 'anon', postId: created.id })
+        ports.repository.upsertHomeFeedEntry({
+          ownerId: userId,
+          postId: created.id,
+          insertedAt: created.createdAt
+        }),
+        ports.repository.upsertHomeFeedEntry({
+          ownerId: 'anon',
+          postId: created.id,
+          insertedAt: created.createdAt
+        })
       ]);
 
       const event = postCreatedEvent({

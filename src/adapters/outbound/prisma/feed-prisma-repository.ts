@@ -17,9 +17,11 @@ import type {
   FeedPostRecord,
   FeedRepositoryPort,
   FeedTransactionPort,
-  HomeFeedRowRecord
+  HomeFeedRowRecord,
+  PostEngagementStatsRecord
 } from '../../../application/feed/ports.js';
 import type { AdminPostHiddenReason, AdminPostStatus } from '../../../domain/feed/post.js';
+import { seedHomeFeedRank } from '../../../application/feed/home-feed-ranking.js';
 
 type FeedPrismaDb = PrismaClient | Prisma.TransactionClient;
 
@@ -51,7 +53,7 @@ function toFeedCommentRecord(comment: Comment): FeedCommentRecord {
 function toHomeFeedRowRecord(input: {
   ownerId: string;
   postId: string;
-  rank: number;
+  rank: bigint;
   insertedAt: Date;
 }): HomeFeedRowRecord {
   return {
@@ -110,17 +112,30 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
 
   async listRecentPosts(input: {
     take: number;
+    cursor?: { createdAt: Date; id: string };
     excludeIds?: string[];
     excludeAuthorId?: string;
   }): Promise<FeedPostRecord[]> {
-    const where: Prisma.PostWhereInput = {};
+    const where: Prisma.PostWhereInput = {
+      status: PostStatus.ACTIVE
+    };
     if (input.excludeIds && input.excludeIds.length > 0) {
       where.id = { notIn: input.excludeIds };
     }
     if (input.excludeAuthorId) {
       where.authorId = { not: input.excludeAuthorId };
     }
-    where.status = PostStatus.ACTIVE;
+    if (input.cursor) {
+      where.OR = [
+        { createdAt: { lt: input.cursor.createdAt } },
+        {
+          AND: [
+            { createdAt: input.cursor.createdAt },
+            { id: { lt: input.cursor.id } }
+          ]
+        }
+      ];
+    }
 
     const items = await this.db.post.findMany({
       where,
@@ -133,7 +148,7 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
 
   async listHomeFeed(input: {
     ownerId: string;
-    cursor?: { createdAt: Date; id: string };
+    cursor?: { rank: bigint; insertedAt: Date; postId: string };
     take: number;
   }): Promise<HomeFeedRowRecord[]> {
     const where: Prisma.HomeFeedWhereInput = {
@@ -141,16 +156,19 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
     };
 
     if (input.cursor) {
-      where.AND = [
+      where.OR = [
+        { rank: { lt: input.cursor.rank } },
         {
-          OR: [
-            { insertedAt: { lt: input.cursor.createdAt } },
-            {
-              AND: [
-                { insertedAt: input.cursor.createdAt },
-                { postId: { lt: input.cursor.id } }
-              ]
-            }
+          AND: [
+            { rank: input.cursor.rank },
+            { insertedAt: { lt: input.cursor.insertedAt } }
+          ]
+        },
+        {
+          AND: [
+            { rank: input.cursor.rank },
+            { insertedAt: input.cursor.insertedAt },
+            { postId: { lt: input.cursor.postId } }
           ]
         }
       ];
@@ -158,7 +176,7 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
 
     const rows = await this.db.homeFeed.findMany({
       where,
-      orderBy: [{ insertedAt: 'desc' }, { postId: 'desc' }],
+      orderBy: [{ rank: 'desc' }, { insertedAt: 'desc' }, { postId: 'desc' }],
       take: input.take
     });
 
@@ -277,7 +295,7 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
     return result.count > 0;
   }
 
-  async upsertHomeFeedEntry(input: { ownerId: string; postId: string }): Promise<void> {
+  async upsertHomeFeedEntry(input: { ownerId: string; postId: string; insertedAt: Date }): Promise<void> {
     await this.db.homeFeed.upsert({
       where: {
         ownerId_postId: {
@@ -288,10 +306,101 @@ export class PrismaFeedRepository implements FeedRepositoryPort {
       create: {
         ownerId: input.ownerId,
         postId: input.postId,
-        rank: 0
+        rank: seedHomeFeedRank(input.insertedAt),
+        insertedAt: input.insertedAt
       },
       update: {}
     });
+  }
+
+  async listPostEngagementStats(postIds: string[]): Promise<PostEngagementStatsRecord[]> {
+    if (postIds.length === 0) {
+      return [];
+    }
+
+    const [likeCounts, commentCounts, repostCounts] = await Promise.all([
+      this.db.like.groupBy({
+        by: ['postId'],
+        where: { postId: { in: postIds } },
+        _count: { _all: true }
+      }),
+      this.db.comment.groupBy({
+        by: ['postId'],
+        where: { postId: { in: postIds } },
+        _count: { _all: true }
+      }),
+      this.db.post.groupBy({
+        by: ['repostOfId'],
+        where: {
+          repostOfId: { in: postIds },
+          status: PostStatus.ACTIVE
+        },
+        _count: { _all: true }
+      })
+    ]);
+
+    const stats = new Map<string, PostEngagementStatsRecord>(
+      postIds.map((postId) => [
+        postId,
+        {
+          postId,
+          likeCount: 0,
+          commentCount: 0,
+          repostCount: 0
+        }
+      ])
+    );
+
+    for (const row of likeCounts) {
+      const entry = stats.get(row.postId);
+      if (entry) {
+        entry.likeCount = row._count._all;
+      }
+    }
+
+    for (const row of commentCounts) {
+      const entry = stats.get(row.postId);
+      if (entry) {
+        entry.commentCount = row._count._all;
+      }
+    }
+
+    for (const row of repostCounts) {
+      if (!row.repostOfId) {
+        continue;
+      }
+      const entry = stats.get(row.repostOfId);
+      if (entry) {
+        entry.repostCount = row._count._all;
+      }
+    }
+
+    return postIds.map((postId) => stats.get(postId)!);
+  }
+
+  async updateHomeFeedRanks(input: {
+    ownerId: string;
+    entries: Array<{ postId: string; rank: bigint }>;
+  }): Promise<void> {
+    if (input.entries.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      input.entries.map((entry) =>
+        this.db.homeFeed.update({
+          where: {
+            ownerId_postId: {
+              ownerId: input.ownerId,
+              postId: entry.postId
+            }
+          },
+          data: {
+            rank: entry.rank
+          }
+        })
+      )
+    );
   }
 
   async countPosts(input?: { status?: AdminPostStatus }): Promise<number> {

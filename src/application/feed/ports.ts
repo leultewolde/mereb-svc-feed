@@ -10,6 +10,12 @@ export interface FeedCursor {
   id: string;
 }
 
+export interface HomeFeedListCursor {
+  rank: bigint;
+  insertedAt: Date;
+  postId: string;
+}
+
 export interface FeedPostRecord {
   id: string;
   authorId: string;
@@ -36,8 +42,15 @@ export interface FeedCommentRecord {
 export interface HomeFeedRowRecord {
   ownerId: string;
   postId: string;
-  rank: number;
+  rank: bigint;
   insertedAt: Date;
+}
+
+export interface PostEngagementStatsRecord {
+  postId: string;
+  likeCount: number;
+  commentCount: number;
+  repostCount: number;
 }
 
 export interface PostEdge {
@@ -145,12 +158,13 @@ export interface FeedRepositoryPort {
   }): Promise<FeedPostRecord[]>;
   listRecentPosts(input: {
     take: number;
+    cursor?: FeedCursor;
     excludeIds?: string[];
     excludeAuthorId?: string;
   }): Promise<FeedPostRecord[]>;
   listHomeFeed(input: {
     ownerId: string;
-    cursor?: FeedCursor;
+    cursor?: HomeFeedListCursor;
     take: number;
   }): Promise<HomeFeedRowRecord[]>;
   listAdminPosts(input: {
@@ -180,6 +194,15 @@ export interface FeedRepositoryPort {
   upsertHomeFeedEntry(input: {
     ownerId: string;
     postId: string;
+    insertedAt: Date;
+  }): Promise<void>;
+  listPostEngagementStats(postIds: string[]): Promise<PostEngagementStatsRecord[]>;
+  updateHomeFeedRanks(input: {
+    ownerId: string;
+    entries: Array<{
+      postId: string;
+      rank: bigint;
+    }>;
   }): Promise<void>;
   countPosts(input?: { status?: AdminPostStatus }): Promise<number>;
   countPostsCreatedSince(since: Date, input?: { status?: AdminPostStatus }): Promise<number>;

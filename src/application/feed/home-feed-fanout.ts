@@ -1,10 +1,12 @@
 import type { FeedPostCreatedEventData } from '../../contracts/feed-events.js';
+import { seedHomeFeedRank } from './home-feed-ranking.js';
 
 const DEFAULT_INSERT_BATCH_SIZE = 500;
 
 export interface HomeFeedFanoutRow {
   ownerId: string;
   postId: string;
+  rank: bigint;
   insertedAt: Date;
 }
 
@@ -80,6 +82,7 @@ export class HomeFeedFanoutOnPostCreatedHandler {
     const rows: HomeFeedFanoutRow[] = Array.from(recipients).map((ownerId) => ({
       ownerId,
       postId,
+      rank: seedHomeFeedRank(insertedAt),
       insertedAt
     }));
 

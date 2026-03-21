@@ -8,6 +8,7 @@ import {
   type HomeFeedFanoutStorePort,
   type HomeFeedInboxStorePort
 } from '../src/application/feed/home-feed-fanout.js';
+import { seedHomeFeedRank } from '../src/application/feed/home-feed-ranking.js';
 
 test('skips event when required ids are missing', async () => {
   let inserted = false;
@@ -71,6 +72,11 @@ test('fans out to anon + author + followers with de-duplication and uses created
       (row) => row.insertedAt.toISOString() === '2026-02-22T22:00:00.000Z'
     )
   );
+  assert.ok(
+    insertedRows.every(
+      (row) => row.rank === seedHomeFeedRank(new Date('2026-02-22T22:00:00.000Z'))
+    )
+  );
 });
 
 test('uses injected current time when created_at is absent', async () => {
@@ -99,6 +105,11 @@ test('uses injected current time when created_at is absent', async () => {
   assert.ok(
     insertedRows.every(
       (row) => row.insertedAt.toISOString() === '2031-01-01T00:00:00.000Z'
+    )
+  );
+  assert.ok(
+    insertedRows.every(
+      (row) => row.rank === seedHomeFeedRank(new Date('2031-01-01T00:00:00.000Z'))
     )
   );
 });

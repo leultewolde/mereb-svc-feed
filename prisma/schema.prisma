@@ -59,11 +59,11 @@ model Comment {
 model HomeFeed {
   ownerId    String
   postId     String
-  rank       Int      @default(0)
+  rank       BigInt   @default(0)
   insertedAt DateTime @default(now())
 
   @@id([ownerId, postId])
-  @@index([ownerId, insertedAt, postId])
+  @@index([ownerId, rank, insertedAt, postId])
 }
 
 model InboxEvent {

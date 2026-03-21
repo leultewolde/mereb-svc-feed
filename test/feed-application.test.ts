@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import {
   createFeedApplicationModule
 } from '../src/application/feed/use-cases.js';
+import {
+  computeHomeFeedRank,
+  seedHomeFeedRank
+} from '../src/application/feed/home-feed-ranking.js';
 import type {
   FeedCommentRecord,
   FeedEventPublisherPort,
@@ -12,6 +16,7 @@ import type {
   PostCachePort
 } from '../src/application/feed/ports.js';
 import { UnauthenticatedError } from '../src/domain/feed/errors.js';
+import { encodeHomeFeedCursor } from '../src/utils/home-feed-cursor.js';
 
 function postRecord(overrides: Partial<FeedPostRecord> = {}): FeedPostRecord {
   return {
@@ -52,6 +57,12 @@ function createRepositoryStub(overrides: Partial<FeedRepositoryPort> = {}): Feed
       return postRecord();
     },
     async upsertHomeFeedEntry() {
+      return;
+    },
+    async listPostEngagementStats() {
+      return [];
+    },
+    async updateHomeFeedRanks() {
       return;
     },
     async countPosts() {
@@ -122,7 +133,7 @@ function createCacheStub(overrides: Partial<PostCachePort> = {}): PostCachePort 
 }
 
 test('createPost seeds home feed/cache and emits post.created event', async () => {
-  const upsertCalls: Array<{ ownerId: string; postId: string }> = [];
+  const upsertCalls: Array<{ ownerId: string; postId: string; insertedAt: Date }> = [];
   const cacheSetCalls: string[] = [];
   const eventCalls: Array<unknown> = [];
 
@@ -168,8 +179,16 @@ test('createPost seeds home feed/cache and emits post.created event', async () =
   assert.equal(result.likedByMe, false);
   assert.deepEqual(result.media, [{ type: 'image', url: 'signed:x.jpg' }]);
   assert.deepEqual(upsertCalls, [
-    { ownerId: 'user-1', postId: 'post-1' },
-    { ownerId: 'anon', postId: 'post-1' }
+    {
+      ownerId: 'user-1',
+      postId: 'post-1',
+      insertedAt: new Date('2026-02-01T00:00:00.000Z')
+    },
+    {
+      ownerId: 'anon',
+      postId: 'post-1',
+      insertedAt: new Date('2026-02-01T00:00:00.000Z')
+    }
   ]);
   assert.deepEqual(cacheSetCalls, ['post-1']);
   assert.equal(eventCalls.length, 1);
@@ -467,6 +486,115 @@ test('admin post queries and moderation actions require roles and update hidden 
   assert.deepEqual(invalidated, ['post-active', 'post-hidden']);
 });
 
+test('feedHome reranks nearby rows with engagement and updates stored ranks', async () => {
+  const now = new Date('2026-02-03T00:00:00.000Z');
+  const olderPost = postRecord({
+    id: 'older-post',
+    authorId: 'author-1',
+    createdAt: new Date('2026-02-02T23:40:00.000Z')
+  });
+  const newerPost = postRecord({
+    id: 'newer-post',
+    authorId: 'author-2',
+    createdAt: new Date('2026-02-03T00:00:00.000Z')
+  });
+  const rankUpdates: Array<{ ownerId: string; entries: Array<{ postId: string; rank: bigint }> }> = [];
+
+  const feed = createFeedApplicationModule({
+    repository: createRepositoryStub({
+      async listHomeFeed(input) {
+        assert.equal(input.ownerId, 'viewer-1');
+        assert.equal(input.cursor, undefined);
+        assert.equal(input.take, 41);
+        return [
+          {
+            ownerId: 'viewer-1',
+            postId: 'newer-post',
+            rank: seedHomeFeedRank(newerPost.createdAt),
+            insertedAt: newerPost.createdAt
+          },
+          {
+            ownerId: 'viewer-1',
+            postId: 'older-post',
+            rank: seedHomeFeedRank(olderPost.createdAt),
+            insertedAt: olderPost.createdAt
+          }
+        ];
+      },
+      async findPostById(id) {
+        if (id === 'older-post') {
+          return olderPost;
+        }
+        if (id === 'newer-post') {
+          return newerPost;
+        }
+        return null;
+      },
+      async listPostEngagementStats(postIds) {
+        assert.deepEqual(postIds, ['newer-post', 'older-post']);
+        return [
+          {
+            postId: 'newer-post',
+            likeCount: 0,
+            commentCount: 0,
+            repostCount: 0
+          },
+          {
+            postId: 'older-post',
+            likeCount: 10,
+            commentCount: 10,
+            repostCount: 5
+          }
+        ];
+      },
+      async updateHomeFeedRanks(input) {
+        rankUpdates.push(input);
+      },
+      async countLikesForPost() {
+        return 0;
+      },
+      async isLikedByUser() {
+        return false;
+      }
+    }),
+    postCache: createCacheStub(),
+    mediaUrlSigner: { signMediaUrl: (key: string) => key },
+    eventPublisher: {
+      async publishPostCreated() {
+        return;
+      },
+      async publishPostLiked() {
+        return;
+      }
+    },
+    now: () => now
+  });
+
+  const home = await feed.queries.feedHome(
+    { limit: 2 },
+    feed.helpers.toExecutionContext({ userId: 'viewer-1' })
+  );
+
+  assert.deepEqual(home.edges.map((edge) => edge.node.id), ['older-post', 'newer-post']);
+  assert.deepEqual(rankUpdates, [
+    {
+      ownerId: 'viewer-1',
+      entries: [
+        {
+          postId: 'older-post',
+          rank: computeHomeFeedRank({
+            createdAt: olderPost.createdAt,
+            likeCount: 10,
+            commentCount: 10,
+            repostCount: 5,
+            now
+          })
+        }
+      ]
+    }
+  ]);
+});
+
 test('feedHome supplements sparse home rows with recent posts', async () => {
   const basePost = postRecord({ id: 'post-1', authorId: 'author-1' });
   const extraPost = postRecord({
@@ -477,12 +605,13 @@ test('feedHome supplements sparse home rows with recent posts', async () => {
 
   const feed = createFeedApplicationModule({
     repository: createRepositoryStub({
-      async listHomeFeed() {
+      async listHomeFeed(input) {
+        assert.equal(input.take, 41);
         return [
           {
             ownerId: 'viewer-1',
             postId: 'post-1',
-            rank: 1,
+            rank: seedHomeFeedRank(basePost.createdAt),
             insertedAt: new Date('2026-02-03T00:00:00.000Z')
           }
         ];
@@ -490,9 +619,21 @@ test('feedHome supplements sparse home rows with recent posts', async () => {
       async findPostById(id) {
         return id === 'post-1' ? basePost : null;
       },
+      async listPostEngagementStats(postIds) {
+        assert.deepEqual(postIds, ['post-1']);
+        return [
+          {
+            postId: 'post-1',
+            likeCount: 0,
+            commentCount: 0,
+            repostCount: 0
+          }
+        ];
+      },
       async listRecentPosts(input) {
         assert.deepEqual(input.excludeIds, ['post-1']);
         assert.equal(input.excludeAuthorId, 'viewer-1');
+        assert.equal(input.take, 1);
         return [extraPost];
       },
       async countLikesForPost() {
@@ -523,6 +664,141 @@ test('feedHome supplements sparse home rows with recent posts', async () => {
     home.edges.map((edge) => edge.node.id),
     ['post-1', 'post-2']
   );
+  assert.equal(home.pageInfo.hasNextPage, false);
+});
+
+test('feedHome does not supplement ranked cursor pages', async () => {
+  const feed = createFeedApplicationModule({
+    repository: createRepositoryStub({
+      async listHomeFeed(input) {
+        assert.deepEqual(input.cursor, {
+          rank: BigInt(1_000),
+          insertedAt: new Date('2026-02-02T00:00:00.000Z'),
+          postId: 'post-1'
+        });
+        return [];
+      },
+      async listRecentPosts() {
+        throw new Error('should not supplement later pages');
+      }
+    }),
+    postCache: createCacheStub(),
+    mediaUrlSigner: { signMediaUrl: (key: string) => key },
+    eventPublisher: {
+      async publishPostCreated() {
+        return;
+      },
+      async publishPostLiked() {
+        return;
+      }
+    }
+  });
+
+  const home = await feed.queries.feedHome(
+    {
+      limit: 2,
+      after: encodeHomeFeedCursor({
+        mode: 'home',
+        rank: BigInt(1_000),
+        insertedAt: new Date('2026-02-02T00:00:00.000Z'),
+        postId: 'post-1'
+      })
+    },
+    feed.helpers.toExecutionContext({ userId: 'viewer-1' })
+  );
+
+  assert.deepEqual(home.edges, []);
+  assert.deepEqual(home.pageInfo, {
+    endCursor: null,
+    hasNextPage: false
+  });
+});
+
+test('feedHome treats invalid cursor as first-page fallback', async () => {
+  const fallbackPost = postRecord({ id: 'fallback-post' });
+
+  const feed = createFeedApplicationModule({
+    repository: createRepositoryStub({
+      async listHomeFeed(input) {
+        assert.equal(input.cursor, undefined);
+        return [];
+      },
+      async listRecentPosts(input) {
+        assert.equal(input.cursor, undefined);
+        assert.equal(input.take, 2);
+        return [fallbackPost];
+      },
+      async countLikesForPost() {
+        return 0;
+      }
+    }),
+    postCache: createCacheStub(),
+    mediaUrlSigner: { signMediaUrl: (key: string) => key },
+    eventPublisher: {
+      async publishPostCreated() {
+        return;
+      },
+      async publishPostLiked() {
+        return;
+      }
+    }
+  });
+
+  const home = await feed.queries.feedHome({ after: 'not-a-real-cursor', limit: 1 }, {});
+
+  assert.deepEqual(home.edges.map((edge) => edge.node.id), ['fallback-post']);
+  assert.equal(home.pageInfo.hasNextPage, false);
+});
+
+test('feedHome paginates fallback results with fallback cursors', async () => {
+  const olderPost = postRecord({
+    id: 'older-post',
+    createdAt: new Date('2026-02-01T00:00:00.000Z')
+  });
+
+  const feed = createFeedApplicationModule({
+    repository: createRepositoryStub({
+      async listHomeFeed() {
+        throw new Error('home feed should not be queried in fallback mode');
+      },
+      async listRecentPosts(input) {
+        assert.deepEqual(input.cursor, {
+          createdAt: new Date('2026-02-02T00:00:00.000Z'),
+          id: 'newer-post'
+        });
+        assert.equal(input.take, 2);
+        return [olderPost];
+      },
+      async countLikesForPost() {
+        return 0;
+      }
+    }),
+    postCache: createCacheStub(),
+    mediaUrlSigner: { signMediaUrl: (key: string) => key },
+    eventPublisher: {
+      async publishPostCreated() {
+        return;
+      },
+      async publishPostLiked() {
+        return;
+      }
+    }
+  });
+
+  const home = await feed.queries.feedHome(
+    {
+      limit: 1,
+      after: encodeHomeFeedCursor({
+        mode: 'fallback',
+        createdAt: new Date('2026-02-02T00:00:00.000Z'),
+        postId: 'newer-post'
+      })
+    },
+    {}
+  );
+
+  assert.deepEqual(home.edges.map((edge) => edge.node.id), ['older-post']);
+  assert.equal(home.pageInfo.hasNextPage, false);
 });
 
 test('comment and repost flows enrich engagement data and persist through repositories', async () => {
@@ -554,7 +830,7 @@ test('comment and repost flows enrich engagement data and persist through reposi
     media: unknown;
     repostOfId?: string | null;
   }> = [];
-  const homeFeedCalls: Array<{ ownerId: string; postId: string }> = [];
+  const homeFeedCalls: Array<{ ownerId: string; postId: string; insertedAt: Date }> = [];
   const cacheSets: string[] = [];
   const publishedEvents: Array<unknown> = [];
 
@@ -672,8 +948,16 @@ test('comment and repost flows enrich engagement data and persist through reposi
     }
   ]);
   assert.deepEqual(homeFeedCalls, [
-    { ownerId: 'viewer-1', postId: 'repost-created' },
-    { ownerId: 'anon', postId: 'repost-created' }
+    {
+      ownerId: 'viewer-1',
+      postId: 'repost-created',
+      insertedAt: new Date('2026-02-06T00:00:00.000Z')
+    },
+    {
+      ownerId: 'anon',
+      postId: 'repost-created',
+      insertedAt: new Date('2026-02-06T00:00:00.000Z')
+    }
   ]);
   assert.deepEqual(cacheSets, ['root-post', 'root-post', 'repost-target', 'root-post', 'repost-created', 'root-post']);
   assert.equal(publishedEvents.length, 1);
