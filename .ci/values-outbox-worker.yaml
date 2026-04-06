@@ -21,6 +21,9 @@ autoscaling:
 serviceMonitor:
   enabled: false
 
+vaultSecretsOperator:
+  enabled: false
+
 # Reuse the main service's config/secret via envFrom refs from the base env values file.
 configMap:
   enabled: false

@@ -29,6 +29,31 @@ loadEnv();
 const typeDefsPath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'schema.graphql');
 const typeDefs = readFileSync(typeDefsPath, 'utf8');
 
+function parseIssuerEnv(value: string): string[] {
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+async function verifyJwtWithIssuerFallback(
+  token: string,
+  options: { issuer: string; audience?: string }
+) {
+  const issuers = parseIssuerEnv(options.issuer);
+  let lastError: unknown;
+
+  for (const issuer of issuers) {
+    try {
+      return await verifyJwt(token, { issuer, audience: options.audience });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError ?? new Error('OIDC_ISSUER env var required');
+}
+
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: createFastifyLoggerOptions('svc-feed')
@@ -70,7 +95,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       return;
     }
     try {
-      const payload = await verifyJwt(token, { issuer, audience });
+      const payload = await verifyJwtWithIssuerFallback(token, { issuer, audience });
       request.userId = payload.sub;
       request.roles = extractJwtRoles(payload);
     } catch (error) {
