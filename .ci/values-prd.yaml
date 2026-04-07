@@ -1,5 +1,3 @@
-nameOverride: svc-feed
-
 replicaCount: 1
 
 deploymentStrategy:
@@ -8,96 +6,7 @@ deploymentStrategy:
     maxSurge: 0
     maxUnavailable: 1
 
-imagePullSecrets:
-  - regcred
-
-image:
-  repository: registry.leultewolde.com/mereb/svc-feed
-  env:
-    - name: NODE_ENV
-      value: production
-    - name: SERVICE_NAME
-      value: svc-feed
-    - name: OTEL_EXPORTER_OTLP_ENDPOINT
-      value: http://otel-collector.platform-prd.svc.cluster.local:4318
-    - name: OTEL_EXPORTER_OTLP_PROTOCOL
-      value: http/protobuf
-    - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
-      value: http/protobuf
-    - name: OIDC_ISSUER
-      valueFrom:
-        configMapKeyRef:
-          name: platform-identity-prd
-          key: OIDC_ISSUER
-  envFrom:
-    - configMapRef:
-        name: svc-feed-prd-config
-    - secretRef:
-        name: svc-feed-prd-secrets
-        optional: false
-
-vaultSecretsOperator:
-  enabled: true
-  auth:
-    create: true
-    spec:
-      vaultAuthGlobalRef:
-        name: mereb-apps-prd
-        namespace: vault-secrets-operator
-      kubernetes:
-        role: apps-prd-svc-feed
-      mount: kubernetes-prd
-  staticSecrets:
-    - name: svc-feed-runtime
-      spec:
-        type: kv-v2
-        mount: kv
-        path: apps/prd
-        refreshAfter: 5m
-        destination:
-          name: svc-feed-prd-secrets
-          create: true
-          overwrite: true
-          transformation:
-            excludes:
-              - .*
-            templates:
-              DATABASE_URL:
-                text: '{{- get .Secrets "FEED_DATABASE_URL" -}}'
-              SPLUNK_HEC_TOKEN:
-                text: '{{- get .Secrets "SPLUNK_HEC_TOKEN" -}}'
-        rolloutRestartTargets:
-          - kind: Deployment
-            name: svc-feed
-
-service:
-  ports:
-    - name: http
-      port: 80
-      targetPort: http
-      containerPort: 4002
-
-ingress:
-  enabled: true
-  className: kong
-  annotations:
-    kubernetes.io/ingress.class: kong
-    cert-manager.io/cluster-issuer: letsencrypt-http
-    konghq.com/strip-path: "true"
-  hosts:
-    - host: api.mereb.app
-      paths:
-        - path: /feed
-          pathType: Prefix
-          servicePort: http
-  tls:
-    - secretName: feed-prd-tls
-      hosts:
-        - api.mereb.app
-
 configMap:
-  enabled: true
-  nameOverride: svc-feed-prd-config
   data:
     PORT: "4002"
     OIDC_AUDIENCE: account
