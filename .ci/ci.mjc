@@ -54,6 +54,21 @@ deploy:
     repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-dev.yaml
+    generatedBaseValues:
+      profile: apiService
+      inputs:
+        serviceName: svc-feed
+        containerPort: 4002
+        routePrefix: /feed
+        configMapName: svc-feed-dev-config
+        secretName: svc-feed-dev-secrets
+        tlsSecretName: feed-dev-tls
+        secretTemplates:
+          DATABASE_URL: FEED_DATABASE_URL
+          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
+        extraEnv:
+          - name: OIDC_ISSUER
+            fromPlatformIdentityConfigKey: OIDC_ISSUER
     smoke:
       url: https://api-dev.mereb.app/feed/healthz
       retries: 3
@@ -68,6 +83,21 @@ deploy:
     repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-dev.yaml
+    generatedBaseValues:
+      profile: apiService
+      inputs:
+        serviceName: svc-feed
+        containerPort: 4002
+        routePrefix: /feed
+        configMapName: svc-feed-dev-config
+        secretName: svc-feed-dev-secrets
+        tlsSecretName: feed-dev-tls
+        secretTemplates:
+          DATABASE_URL: FEED_DATABASE_URL
+          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
+        extraEnv:
+          - name: OIDC_ISSUER
+            fromPlatformIdentityConfigKey: OIDC_ISSUER
     generatedValues:
       profile: outboxWorker
     notes: "Dedicated outbox relay worker deployment"
@@ -80,6 +110,21 @@ deploy:
     repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-stg.yaml
+    generatedBaseValues:
+      profile: apiService
+      inputs:
+        serviceName: svc-feed
+        containerPort: 4002
+        routePrefix: /feed
+        configMapName: svc-feed-stg-config
+        secretName: svc-feed-stg-secrets
+        tlsSecretName: feed-stg-tls
+        secretTemplates:
+          DATABASE_URL: FEED_DATABASE_URL
+          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
+        extraEnv:
+          - name: OIDC_ISSUER
+            fromPlatformIdentityConfigKey: OIDC_ISSUER
     smoke:
       url: https://api-stg.mereb.app/feed/healthz
       retries: 3
@@ -94,6 +139,21 @@ deploy:
     repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-stg.yaml
+    generatedBaseValues:
+      profile: apiService
+      inputs:
+        serviceName: svc-feed
+        containerPort: 4002
+        routePrefix: /feed
+        configMapName: svc-feed-stg-config
+        secretName: svc-feed-stg-secrets
+        tlsSecretName: feed-stg-tls
+        secretTemplates:
+          DATABASE_URL: FEED_DATABASE_URL
+          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
+        extraEnv:
+          - name: OIDC_ISSUER
+            fromPlatformIdentityConfigKey: OIDC_ISSUER
     generatedValues:
       profile: outboxWorker
     notes: "Dedicated outbox relay worker deployment"
@@ -106,6 +166,21 @@ deploy:
     repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-prd.yaml
+    generatedBaseValues:
+      profile: apiService
+      inputs:
+        serviceName: svc-feed
+        containerPort: 4002
+        routePrefix: /feed
+        configMapName: svc-feed-prd-config
+        secretName: svc-feed-prd-secrets
+        tlsSecretName: feed-prd-tls
+        secretTemplates:
+          DATABASE_URL: FEED_DATABASE_URL
+          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
+        extraEnv:
+          - name: OIDC_ISSUER
+            fromPlatformIdentityConfigKey: OIDC_ISSUER
     smoke:
       url: https://api.mereb.app/feed/healthz
       retries: 3
@@ -120,6 +195,21 @@ deploy:
     repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-prd.yaml
+    generatedBaseValues:
+      profile: apiService
+      inputs:
+        serviceName: svc-feed
+        containerPort: 4002
+        routePrefix: /feed
+        configMapName: svc-feed-prd-config
+        secretName: svc-feed-prd-secrets
+        tlsSecretName: feed-prd-tls
+        secretTemplates:
+          DATABASE_URL: FEED_DATABASE_URL
+          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
+        extraEnv:
+          - name: OIDC_ISSUER
+            fromPlatformIdentityConfigKey: OIDC_ISSUER
     generatedValues:
       profile: outboxWorker
       overlay:
