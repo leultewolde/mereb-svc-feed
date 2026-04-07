@@ -68,7 +68,8 @@ deploy:
     repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-dev.yaml
-      - .ci/values-outbox-worker.yaml
+    generatedValues:
+      profile: outboxWorker
     notes: "Dedicated outbox relay worker deployment"
 
   stg:
@@ -93,7 +94,8 @@ deploy:
     repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-stg.yaml
-      - .ci/values-outbox-worker.yaml
+    generatedValues:
+      profile: outboxWorker
     notes: "Dedicated outbox relay worker deployment"
 
   prd:
@@ -118,8 +120,17 @@ deploy:
     repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-prd.yaml
-      - .ci/values-outbox-worker.yaml
-      - .ci/values-prd-outbox-worker.yaml
+    generatedValues:
+      profile: outboxWorker
+      overlay:
+        deploymentStrategy:
+          type: RollingUpdate
+          rollingUpdate:
+            maxSurge: 0
+            maxUnavailable: 1
+        resources:
+          requests:
+            cpu: 50m
     notes: "Dedicated outbox relay worker deployment"
 
 signing:
