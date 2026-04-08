@@ -46,29 +46,37 @@ deploy:
     - prd
     - prd_outbox
 
-  dev:
-    release: svc-feed-dev
-    namespace: apps-dev
+  defaults:
     chart: app-chart
     repo: https://charts.leultewolde.com
     repoCredentialId: helm-chart-creds
+    wait: true
+    atomic: true
+    timeout: 10m
+
+  generatedBaseDefaults:
+    profile: apiService
+    inputs:
+      serviceName: svc-feed
+      containerPort: 4002
+      routePrefix: /feed
+      secretTemplates:
+        DATABASE_URL: FEED_DATABASE_URL
+        SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
+      extraEnv:
+        - name: OIDC_ISSUER
+          fromPlatformIdentityConfigKey: OIDC_ISSUER
+
+  dev:
+    release: svc-feed-dev
+    namespace: apps-dev
     valuesFiles:
       - .ci/values-dev.yaml
     generatedBaseValues:
-      profile: apiService
       inputs:
-        serviceName: svc-feed
-        containerPort: 4002
-        routePrefix: /feed
         configMapName: svc-feed-dev-config
         secretName: svc-feed-dev-secrets
         tlsSecretName: feed-dev-tls
-        secretTemplates:
-          DATABASE_URL: FEED_DATABASE_URL
-          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
-        extraEnv:
-          - name: OIDC_ISSUER
-            fromPlatformIdentityConfigKey: OIDC_ISSUER
     smoke:
       url: https://api-dev.mereb.app/feed/healthz
       retries: 3
@@ -76,28 +84,10 @@ deploy:
       timeout: 60s
 
   dev_outbox:
+    extends: dev
     release: svc-feed-dev-outbox
     namespace: apps-dev
-    chart: app-chart
-    repo: https://charts.leultewolde.com
-    repoCredentialId: helm-chart-creds
-    valuesFiles:
-      - .ci/values-dev.yaml
-    generatedBaseValues:
-      profile: apiService
-      inputs:
-        serviceName: svc-feed
-        containerPort: 4002
-        routePrefix: /feed
-        configMapName: svc-feed-dev-config
-        secretName: svc-feed-dev-secrets
-        tlsSecretName: feed-dev-tls
-        secretTemplates:
-          DATABASE_URL: FEED_DATABASE_URL
-          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
-        extraEnv:
-          - name: OIDC_ISSUER
-            fromPlatformIdentityConfigKey: OIDC_ISSUER
+    smoke: false
     generatedValues:
       profile: outboxWorker
     notes: "Dedicated outbox relay worker deployment"
@@ -105,26 +95,13 @@ deploy:
   stg:
     release: svc-feed-stg
     namespace: apps-stg
-    chart: app-chart
-    repo: https://charts.leultewolde.com
-    repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-stg.yaml
     generatedBaseValues:
-      profile: apiService
       inputs:
-        serviceName: svc-feed
-        containerPort: 4002
-        routePrefix: /feed
         configMapName: svc-feed-stg-config
         secretName: svc-feed-stg-secrets
         tlsSecretName: feed-stg-tls
-        secretTemplates:
-          DATABASE_URL: FEED_DATABASE_URL
-          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
-        extraEnv:
-          - name: OIDC_ISSUER
-            fromPlatformIdentityConfigKey: OIDC_ISSUER
     smoke:
       url: https://api-stg.mereb.app/feed/healthz
       retries: 3
@@ -132,28 +109,10 @@ deploy:
       timeout: 60s
 
   stg_outbox:
+    extends: stg
     release: svc-feed-stg-outbox
     namespace: apps-stg
-    chart: app-chart
-    repo: https://charts.leultewolde.com
-    repoCredentialId: helm-chart-creds
-    valuesFiles:
-      - .ci/values-stg.yaml
-    generatedBaseValues:
-      profile: apiService
-      inputs:
-        serviceName: svc-feed
-        containerPort: 4002
-        routePrefix: /feed
-        configMapName: svc-feed-stg-config
-        secretName: svc-feed-stg-secrets
-        tlsSecretName: feed-stg-tls
-        secretTemplates:
-          DATABASE_URL: FEED_DATABASE_URL
-          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
-        extraEnv:
-          - name: OIDC_ISSUER
-            fromPlatformIdentityConfigKey: OIDC_ISSUER
+    smoke: false
     generatedValues:
       profile: outboxWorker
     notes: "Dedicated outbox relay worker deployment"
@@ -161,26 +120,13 @@ deploy:
   prd:
     release: svc-feed
     namespace: apps-prd
-    chart: app-chart
-    repo: https://charts.leultewolde.com
-    repoCredentialId: helm-chart-creds
     valuesFiles:
       - .ci/values-prd.yaml
     generatedBaseValues:
-      profile: apiService
       inputs:
-        serviceName: svc-feed
-        containerPort: 4002
-        routePrefix: /feed
         configMapName: svc-feed-prd-config
         secretName: svc-feed-prd-secrets
         tlsSecretName: feed-prd-tls
-        secretTemplates:
-          DATABASE_URL: FEED_DATABASE_URL
-          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
-        extraEnv:
-          - name: OIDC_ISSUER
-            fromPlatformIdentityConfigKey: OIDC_ISSUER
     smoke:
       url: https://api.mereb.app/feed/healthz
       retries: 3
@@ -188,28 +134,10 @@ deploy:
       timeout: 60s
 
   prd_outbox:
+    extends: prd
     release: svc-feed-outbox
     namespace: apps-prd
-    chart: app-chart
-    repo: https://charts.leultewolde.com
-    repoCredentialId: helm-chart-creds
-    valuesFiles:
-      - .ci/values-prd.yaml
-    generatedBaseValues:
-      profile: apiService
-      inputs:
-        serviceName: svc-feed
-        containerPort: 4002
-        routePrefix: /feed
-        configMapName: svc-feed-prd-config
-        secretName: svc-feed-prd-secrets
-        tlsSecretName: feed-prd-tls
-        secretTemplates:
-          DATABASE_URL: FEED_DATABASE_URL
-          SPLUNK_HEC_TOKEN: SPLUNK_HEC_TOKEN
-        extraEnv:
-          - name: OIDC_ISSUER
-            fromPlatformIdentityConfigKey: OIDC_ISSUER
+    smoke: false
     generatedValues:
       profile: outboxWorker
       overlay:
