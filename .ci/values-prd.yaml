@@ -13,9 +13,6 @@ configMap:
     MEDIA_SERVICE_URL: http://svc-media.apps-prd.svc.cluster.local
     MEDIA_CDN_ORIGIN: https://uploads.mereb.app/media
     REDIS_URL: redis://platform-prd-redis-master.platform-prd.svc.cluster.local:6379/2
-    KAFKA_BROKERS: platform-prd-redpanda-0.platform-prd-redpanda.platform-prd.svc.cluster.local:9092,platform-prd-redpanda-1.platform-prd-redpanda.platform-prd.svc.cluster.local:9092,platform-prd-redpanda-2.platform-prd-redpanda.platform-prd.svc.cluster.local:9092
-    KAFKA_SSL: "true"
-    KAFKA_SSL_INSECURE: "true"
     SPLUNK_HEC_URL: https://splunk-hec.mereb.app/services/collector/event
     SPLUNK_HEC_INDEX: logs-prd
 

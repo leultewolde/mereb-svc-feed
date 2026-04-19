@@ -7,9 +7,6 @@ configMap:
     MEDIA_SERVICE_URL: http://svc-media-stg.apps-stg.svc.cluster.local
     MEDIA_CDN_ORIGIN: https://uploads-stg.mereb.app/media-stg
     REDIS_URL: redis://platform-stg-redis-master.platform-stg.svc.cluster.local:6379/2
-    KAFKA_BROKERS: platform-stg-redpanda-0.platform-stg-redpanda.platform-stg.svc.cluster.local:9092
-    KAFKA_SSL: "true"
-    KAFKA_SSL_INSECURE: "true"
     SPLUNK_HEC_URL: https://splunk-hec.mereb.app/services/collector/event
     SPLUNK_HEC_INDEX: logs-stg
 
