@@ -30,7 +30,7 @@
     "@mereb/shared-packages": "0.0.44",
     "@graphql-tools/schema": "^10.0.31",
     "@graphql-tools/utils": "^10.11.0",
-    "fastify": "^5.8.1",
+    "fastify": "5.8.5",
     "mercurius": "^16.8.0",
     "@fastify/helmet": "^13.0.2",
     "@fastify/cors": "^11.2.0",
