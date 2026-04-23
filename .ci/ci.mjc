@@ -123,6 +123,7 @@ deploy:
     release: svc-feed-dev-outbox
     namespace: apps-dev
     smoke: false
+    postDeployStages: []
     generatedValues:
       profile: outboxWorker
     notes: "Dedicated outbox relay worker deployment"
@@ -160,6 +161,7 @@ deploy:
     release: svc-feed-stg-outbox
     namespace: apps-stg
     smoke: false
+    postDeployStages: []
     generatedValues:
       profile: outboxWorker
     notes: "Dedicated outbox relay worker deployment"
