@@ -1,5 +1,6 @@
 import type { IResolvers } from '@graphql-tools/utils';
 import { GraphQLScalarType, Kind, type ValueNode } from 'graphql';
+import { mapInstanceofToGraphQLError } from '@mereb/shared-packages';
 import type { GraphQLContext } from '../../../context.js';
 import {
   FeedCommentNotFoundError,
@@ -45,22 +46,13 @@ const AnyScalar = new GraphQLScalarType({
 });
 
 function toGraphQLError(error: unknown): never {
-  if (error instanceof UnauthenticatedError) {
-    throw new Error(error.message);
-  }
-  if (error instanceof ForbiddenError) {
-    throw new Error(error.message);
-  }
-  if (error instanceof FeedPostNotFoundError) {
-    throw new Error(error.message);
-  }
-  if (error instanceof FeedCommentNotFoundError) {
-    throw new Error(error.message);
-  }
-  if (error instanceof InvalidMediaAssetError) {
-    throw new Error(error.message);
-  }
-  throw error;
+  mapInstanceofToGraphQLError(error, [
+    [UnauthenticatedError, (e) => e.message],
+    [ForbiddenError, (e) => e.message],
+    [FeedPostNotFoundError, (e) => e.message],
+    [FeedCommentNotFoundError, (e) => e.message],
+    [InvalidMediaAssetError, (e) => e.message]
+  ]);
 }
 
 function hasResolvedMediaArray(value: unknown): value is { media: Array<{ type: string; url: string }> } {

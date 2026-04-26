@@ -18,7 +18,8 @@ import {
   getRedisClient,
   loadEnv,
   parseAuthHeader,
-  verifyJwt
+  parseIssuerList,
+  verifyJwtWithIssuers
 } from '@mereb/shared-packages';
 import type { GraphQLContext } from '../context.js';
 import { createResolvers } from '../adapters/inbound/graphql/resolvers.js';
@@ -28,31 +29,6 @@ loadEnv();
 
 const typeDefsPath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'schema.graphql');
 const typeDefs = readFileSync(typeDefsPath, 'utf8');
-
-function parseIssuerEnv(value: string): string[] {
-  return value
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-async function verifyJwtWithIssuerFallback(
-  token: string,
-  options: { issuer: string; audience?: string }
-) {
-  const issuers = parseIssuerEnv(options.issuer);
-  let lastError: unknown;
-
-  for (const issuer of issuers) {
-    try {
-      return await verifyJwt(token, { issuer, audience: options.audience });
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  throw lastError ?? new Error('OIDC_ISSUER env var required');
-}
 
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -65,11 +41,8 @@ export async function buildServer(): Promise<FastifyInstance> {
   await app.register(rateLimit, { max: 1200, timeWindow: '1 minute' });
   await app.register(underPressure);
 
-  const issuer = process.env.OIDC_ISSUER;
+  const issuers = parseIssuerList(getEnv('OIDC_ISSUER'));
   const audience = process.env.OIDC_AUDIENCE;
-  if (!issuer) {
-    throw new Error('OIDC_ISSUER env var required');
-  }
 
   const redisUrl = getEnv('REDIS_URL');
   let redis: RedisClientType | undefined;
@@ -95,7 +68,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       return;
     }
     try {
-      const payload = await verifyJwtWithIssuerFallback(token, { issuer, audience });
+      const payload = await verifyJwtWithIssuers(token, { issuers, audience });
       request.userId = payload.sub;
       request.roles = extractJwtRoles(payload);
     } catch (error) {
