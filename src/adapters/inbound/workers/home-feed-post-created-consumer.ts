@@ -1,4 +1,4 @@
-import { createConsumer, ensureTopicExists } from '@mereb/shared-packages';
+import { startConsumer } from '@mereb/shared-packages';
 import type { Consumer, KafkaConfig } from 'kafkajs';
 import { createChildLogger } from '../../../logger.js';
 import type {
@@ -20,68 +20,24 @@ export async function startHomeFeedPostCreatedConsumer(
   kafkaConfig: KafkaConfig | null,
   handler: HomeFeedPostCreatedInboxHandler
 ): Promise<Consumer | null> {
-  if (!kafkaConfig) {
-    logger.warn('Kafka config missing; home feed worker disabled');
-    return null;
-  }
-
-  const topic = getPostCreatedTopic();
-  await ensureTopicExists(kafkaConfig, topic, 1, 1);
-  const consumer = await createConsumer(kafkaConfig, getConsumerGroupId());
-  await consumer.subscribe({ topic, fromBeginning: false });
-
-  consumer
-    .run({
-      eachMessage: async ({ message, partition, topic }) => {
+  return startConsumer<FeedPostCreatedIntegrationEvent>({
+    kafkaConfig,
+    topic: getPostCreatedTopic(),
+    consumerGroup: getConsumerGroupId(),
+    logger,
+    parse: (raw) => JSON.parse(raw) as FeedPostCreatedIntegrationEvent,
+    disabledMessage: 'Kafka config missing; home feed worker disabled',
+    handle: async ({ topic, partition, offset, parsed, consumerGroup }) => {
+      logger.info({ topic, partition, offset }, 'Received Kafka message');
+      const result = await handler.execute(parsed, { topic, partition, offset, consumerGroup });
+      if (result.status === 'skipped_missing_ids') {
+        logger.warn({ event: parsed }, 'Received post.created event without ids');
+      } else if (result.status === 'skipped_duplicate') {
         logger.info(
-          { topic, partition, offset: message.offset },
-          'Received Kafka message'
+          { topic, partition, offset, eventId: parsed.event_id },
+          'Skipping duplicate post.created event'
         );
-
-        const value = message.value?.toString();
-        if (!value) {
-          logger.warn(
-            { topic, partition, offset: message.offset },
-            'Skipping message with no value'
-          );
-          return;
-        }
-
-        let parsed: FeedPostCreatedIntegrationEvent | null = null;
-        try {
-          parsed = JSON.parse(value) as FeedPostCreatedIntegrationEvent;
-        } catch (error) {
-          logger.error({ err: error, value }, 'Failed to parse post.created message value');
-          return;
-        }
-
-        try {
-          const result = await handler.execute(parsed, {
-            topic,
-            partition,
-            offset: message.offset,
-            consumerGroup: getConsumerGroupId()
-          });
-          if (result.status === 'skipped_missing_ids') {
-            logger.warn({ event: parsed }, 'Received post.created event without ids');
-          } else if (result.status === 'skipped_duplicate') {
-            logger.info(
-              { topic, partition, offset: message.offset, eventId: parsed.event_id },
-              'Skipping duplicate post.created event'
-            );
-          }
-        } catch (error) {
-          logger.error(
-            { err: error, topic, partition, offset: message.offset },
-            'Failed to fan out post.created event'
-          );
-        }
       }
-    })
-    .catch((error) => {
-      logger.error({ err: error }, 'Home feed consumer crashed');
-    });
-
-  logger.info({ topic, groupId: getConsumerGroupId() }, 'Home feed worker started');
-  return consumer;
+    }
+  });
 }
